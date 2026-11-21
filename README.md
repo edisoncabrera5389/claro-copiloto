@@ -11,7 +11,8 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | Fase | Componente | Estado |
 |---|---|---|
 | 1–2 | Planteamiento y arquitectura ([SAD](docs/)) | ✅ |
-| 4 | Mocks CRM / Facturación / ERP + tools MCP | ⏳ |
+| 4 | [Mocks CRM / Facturación / ERP](apps/mocks/) (contrato, 429, 503, 409/403) | ✅ |
+| 4, 7 | Tools y skills MCP | ⏳ |
 | 5–7 | Ingesta, RAG híbrido, agente LangGraph, memoria | ⏳ |
 | 3 | Front Angular del asesor | ⏳ |
 | 9 | Modelos de intención y churn (MLflow, drift) | ⏳ |
@@ -30,8 +31,14 @@ cp .env.example .env
 python scripts/bootstrap_data.py --source "<ruta a Insumos_Prueba_Consultor_IA>"
 
 # 3. Levantar la solución completa
-docker compose up -d
+docker compose up -d --build
 ```
+
+| Servicio | URL local |
+|---|---|
+| CRM mock | http://localhost:8081/docs |
+| Facturación mock | http://localhost:8082/docs |
+| ERP mock | http://localhost:8083/docs |
 
 ## Estructura del repositorio
 
