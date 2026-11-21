@@ -23,7 +23,7 @@ Cada solicitud pasa por: **X-API-Key (401) → límite (429) → falla simulada 
 | 503 | Aleatorio, **antes del handler**: un POST que recibe 503 no tuvo efecto y se puede reintentar sin duplicar | `MOCKS_FAIL_RATE` (0.02), `MOCKS_SEED` |
 | Errores | Siempre `{codigo, mensaje, trace_id}`. Las validaciones responden 400 `SOLICITUD_INVALIDA` y nombran los campos, nunca el valor recibido | — |
 | Trazas | Reutiliza el trace-id de `traceparent` (W3C) o genera uno; se devuelve en `X-Trace-Id` | — |
-| Logs | JSON por solicitud con método, ruta, estado y latencia. **Sin query string**: `numero_documento` viaja en la URL de `GET /clientes`. El access log de uvicorn está desactivado | — |
+| Logs | JSON por solicitud con método, ruta, estado y latencia; `/health` solo se registra si falla. **Sin query string**: `numero_documento` viaja en la URL de `GET /clientes`. El access log de uvicorn está desactivado | — |
 | Fecha del caso | "Hoy" para la ventana de tickets, los 12 meses de ofertas y las fechas de lo creado | `MOCKS_FECHA_REFERENCIA` (2026-11-18) |
 
 > Por contrato, el CRM devuelve `numero_documento`, `celular` y `email` en la ficha (`GET /clientes/{id}`). Filtrarlos antes de que lleguen al LLM es responsabilidad del servidor MCP.
@@ -73,7 +73,7 @@ La imagen es multi-stage (uv en la etapa de build; el runtime solo tiene el venv
 
 ```bash
 cd apps/mocks
-uv run pytest          # 97 pruebas, cobertura ~99 %
+uv run pytest          # 98 pruebas, cobertura ~99 %
 uv run ruff check . && uv run ruff format --check .
 ```
 

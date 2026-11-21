@@ -209,6 +209,14 @@ def test_logs_no_contienen_documento_ni_query_string(crm_http, clientes, caplog)
         assert dato not in texto
 
 
+def test_health_exitoso_no_se_registra(erp_http, caplog):
+    caplog.set_level(logging.INFO, logger="mocks.http")
+    assert erp_http.get("/health").status_code == 200
+    erp_http.get("/v1/ordenes-servicio/OS-1")
+    assert '"ruta": "/health"' not in caplog.text
+    assert '"ruta": "/v1/ordenes-servicio/OS-1"' in caplog.text
+
+
 @requiere_insumos
 def test_error_400_no_devuelve_el_valor_recibido(crm_http, clientes):
     doc = clientes["C-1001"]["numero_documento"]

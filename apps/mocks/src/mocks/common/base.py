@@ -99,6 +99,9 @@ def crear_app_base(
         inicio = time.perf_counter()
         response = await _pipeline(request, call_next)
         response.headers["X-Trace-Id"] = request.state.trace_id
+        # El HEALTHCHECK llama /health cada 15 s: solo se registra si falla, para no tapar el tráfico real.
+        if request.url.path == "/health" and response.status_code == 200:
+            return response
         # Nunca se registra la query string: /clientes?numero_documento=... es PII.
         log.info(
             json.dumps(
