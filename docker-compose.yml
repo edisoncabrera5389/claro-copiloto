@@ -1,0 +1,54 @@
+# Claro Copiloto · entorno local.  Uso:  docker compose up -d
+# Requiere .env (copiar de .env.example) y los insumos en data/raw (scripts/bootstrap_data.py).
+# Se irán agregando servicios por bloque: mcp-server, api, qdrant, redis, mongo, litellm, frontend...
+
+name: claro-copiloto
+
+x-mock: &mock
+  build:
+    context: ./apps/mocks
+  image: claro-copiloto/mocks:${IMAGE_TAG:-local}
+  restart: unless-stopped
+  environment: &mock-env
+    MOCKS_API_KEY: ${MOCKS_API_KEY:?Defina MOCKS_API_KEY en .env}
+    MOCKS_FAIL_RATE: ${MOCKS_FAIL_RATE:-0.02}
+    MOCKS_RATE_LIMIT_PER_MIN: ${MOCKS_RATE_LIMIT_PER_MIN:-60}
+    MOCKS_FECHA_REFERENCIA: ${MOCKS_FECHA_REFERENCIA:-2026-11-18}
+  volumes:
+    # Datos sintéticos de la prueba (no versionados), solo lectura.
+    - ./data/raw/04_apis/datos_mock:/data:ro
+  # Endurecimiento: sistema de archivos de solo lectura, sin capacidades ni escalamiento de privilegios.
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [copiloto]
+  deploy:
+    resources:
+      limits: { cpus: "0.5", memory: 192M }
+
+services:
+  crm-mock:
+    <<: *mock
+    environment:
+      <<: *mock-env
+      MOCKS_SERVICIO: crm
+    ports: ["127.0.0.1:8081:8081"]
+
+  facturacion-mock:
+    <<: *mock
+    environment:
+      <<: *mock-env
+      MOCKS_SERVICIO: facturacion
+    ports: ["127.0.0.1:8082:8082"]
+
+  erp-mock:
+    <<: *mock
+    environment:
+      <<: *mock-env
+      MOCKS_SERVICIO: erp
+    ports: ["127.0.0.1:8083:8083"]
+
+networks:
+  copiloto:
+    name: claro-copiloto

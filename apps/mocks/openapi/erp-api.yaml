@@ -1,0 +1,190 @@
+openapi: 3.0.3
+info:
+  title: ERP (mock) – Claro Copiloto
+  version: 1.0.0
+  description: |
+    Contrato propio del proyecto (la prueba no entregó uno). Lo consume n8n después de una acción
+    confirmada por el asesor: órdenes de servicio (visita técnica, envío/retiro de equipo) y notas
+    crédito que contabilizan los ajustes de facturación. Mismas reglas transversales que CRM y
+    Facturación: X-API-Key, 60 req/min (429 + Retry-After) y 503 simulado.
+servers:
+  - url: http://localhost:8083/v1
+security:
+  - ApiKeyAuth: []
+paths:
+  /ordenes-servicio:
+    post:
+      summary: Crear orden de servicio (acción con efecto)
+      description: Prioritaria se programa a 24 h (visita técnica prioritaria de POL-RET-2026); estándar a 3 días.
+      operationId: crearOrdenServicio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevaOrden' }
+      responses:
+        '201':
+          description: Orden creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrdenServicio' }
+        '400': { $ref: '#/components/responses/SolicitudInvalida' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '429': { $ref: '#/components/responses/LimiteExcedido' }
+        '503': { $ref: '#/components/responses/NoDisponible' }
+    get:
+      summary: Listar órdenes de un cliente (más recientes primero)
+      operationId: listarOrdenesServicio
+      parameters:
+        - { in: query, name: cliente_id, required: true, schema: { type: string, pattern: '^C-\d{4}$' } }
+      responses:
+        '200':
+          description: Órdenes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/OrdenServicio' } }
+        '400': { $ref: '#/components/responses/SolicitudInvalida' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '429': { $ref: '#/components/responses/LimiteExcedido' }
+        '503': { $ref: '#/components/responses/NoDisponible' }
+  /ordenes-servicio/{ordenId}:
+    get:
+      summary: Obtener orden de servicio
+      operationId: obtenerOrdenServicio
+      parameters:
+        - { in: path, name: ordenId, required: true, schema: { type: string, example: OS-70001 } }
+      responses:
+        '200':
+          description: Orden
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrdenServicio' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '429': { $ref: '#/components/responses/LimiteExcedido' }
+        '503': { $ref: '#/components/responses/NoDisponible' }
+  /notas-credito:
+    post:
+      summary: Contabilizar nota crédito de un ajuste (acción con efecto)
+      description: Si ajuste_id ya tiene nota, responde 409 NOTA_CREDITO_DUPLICADA (protege los reintentos de n8n).
+      operationId: crearNotaCredito
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NuevaNotaCredito' }
+      responses:
+        '201':
+          description: Nota crédito contabilizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotaCredito' }
+        '400': { $ref: '#/components/responses/SolicitudInvalida' }
+        '409':
+          description: El ajuste ya tiene nota crédito
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '429': { $ref: '#/components/responses/LimiteExcedido' }
+        '503': { $ref: '#/components/responses/NoDisponible' }
+  /notas-credito/{notaId}:
+    get:
+      summary: Obtener nota crédito
+      operationId: obtenerNotaCredito
+      parameters:
+        - { in: path, name: notaId, required: true, schema: { type: string, example: NC-00001 } }
+      responses:
+        '200':
+          description: Nota crédito
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotaCredito' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '429': { $ref: '#/components/responses/LimiteExcedido' }
+        '503': { $ref: '#/components/responses/NoDisponible' }
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  responses:
+    SolicitudInvalida:
+      description: Solicitud inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NoAutorizado:
+      description: API key ausente o inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NoEncontrado:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    LimiteExcedido:
+      description: Se excedió el límite de 60 solicitudes por minuto
+      headers:
+        Retry-After: { schema: { type: integer }, description: Segundos para reintentar }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NoDisponible:
+      description: Servicio temporalmente no disponible (simulado en el 2 % de las llamadas)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo: { type: string, example: ORDEN_NO_ENCONTRADA }
+        mensaje: { type: string }
+        trace_id: { type: string }
+    NuevaOrden:
+      type: object
+      required: [cliente_id, tipo]
+      properties:
+        cliente_id: { type: string, pattern: '^C-\d{4}$' }
+        tipo: { type: string, enum: [visita_tecnica, envio_equipo, retiro_equipo] }
+        prioridad: { type: string, enum: [estandar, prioritaria], default: estandar }
+        equipo: { type: string, enum: [modem, repetidor, decodificador], nullable: true, description: Obligatorio para envio_equipo y retiro_equipo }
+        ticket_id: { type: string, pattern: '^TK-\d+$', nullable: true }
+        descripcion: { type: string, maxLength: 1000, nullable: true, description: Se guarda pero no se devuelve (texto libre, posible PII) }
+    OrdenServicio:
+      type: object
+      properties:
+        orden_id: { type: string, example: OS-70001 }
+        cliente_id: { type: string }
+        tipo: { type: string, enum: [visita_tecnica, envio_equipo, retiro_equipo] }
+        prioridad: { type: string, enum: [estandar, prioritaria] }
+        equipo: { type: string, enum: [modem, repetidor, decodificador], nullable: true }
+        ticket_id: { type: string, nullable: true }
+        estado: { type: string, enum: [programada, en_curso, completada, cancelada] }
+        fecha_creacion: { type: string, format: date }
+        fecha_programada: { type: string, format: date }
+    NuevaNotaCredito:
+      type: object
+      required: [factura_id, cliente_id, valor, motivo]
+      properties:
+        factura_id: { type: string, pattern: '^F-\d+$' }
+        cliente_id: { type: string, pattern: '^C-\d{4}$' }
+        valor: { type: integer, minimum: 1 }
+        motivo: { type: string, maxLength: 500 }
+        ajuste_id: { type: string, nullable: true }
+    NotaCredito:
+      type: object
+      properties:
+        nota_id: { type: string, example: NC-00001 }
+        factura_id: { type: string }
+        cliente_id: { type: string }
+        valor: { type: integer }
+        motivo: { type: string }
+        ajuste_id: { type: string, nullable: true }
+        estado: { type: string, enum: [contabilizada, anulada] }
+        fecha: { type: string, format: date }
