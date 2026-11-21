@@ -93,6 +93,36 @@ services:
       timeout: 3s
       retries: 5
 
+  litellm:
+    <<: *infra
+    # Fijado por digest (LiteLLM 1.110.2): build reproducible.
+    image: ghcr.io/berriai/litellm@sha256:ef798594ca3db8d81bad2e1439f536f49b71fe095ee9f20416f5e149b4e22035
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Defina OPENAI_API_KEY en .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Defina LITELLM_MASTER_KEY en .env}
+    volumes:
+      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+    ports: ["127.0.0.1:4000:4000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 40s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  ollama:
+    # Perfil opcional: docker compose --profile llm-local up -d ollama
+    #                  docker compose exec ollama ollama pull llama3.2:3b
+    <<: *infra
+    image: ollama/ollama:latest
+    profiles: ["llm-local"]
+    volumes: [ollama-modelos:/root/.ollama]
+    ports: ["127.0.0.1:11434:11434"]
+
   ingesta-watcher:
     <<: *ingesta
     command: ["python", "-m", "ingesta", "watcher"]
@@ -116,6 +146,39 @@ services:
     deploy:
       resources:
         limits: { cpus: "4.0", memory: 3G }   # Whisper small + spaCy
+
+  api:
+    <<: *endurecido
+    build:
+      context: ./apps/api
+    image: claro-copiloto/api:${IMAGE_TAG:-local}
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
+      JWT_EXPIRES_MIN: ${JWT_EXPIRES_MIN:-480}
+      API_DEMO_PASSWORD: ${API_DEMO_PASSWORD:?Defina API_DEMO_PASSWORD en .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Defina LITELLM_MASTER_KEY en .env}
+      MCP_CONFIRMACION_SECRET: ${MCP_CONFIRMACION_SECRET:?Defina MCP_CONFIRMACION_SECRET en .env}
+      MCP_CONFIRMACION_TTL_S: ${MCP_CONFIRMACION_TTL_S:-300}
+      API_LLM_BASE_URL: http://litellm:4000/v1
+      API_QDRANT_URL: http://qdrant:6333
+      API_MCP_URL: http://mcp-server:8090/mcp
+      API_REDIS_URL: redis://redis:6379/1
+      API_MONGO_URL: mongodb://mongo:27017
+      API_RERANKER_ACTIVO: ${API_RERANKER_ACTIVO:-false}
+      API_RATE_LIMIT_POR_MIN: ${API_RATE_LIMIT_POR_MIN:-30}
+    volumes:
+      - modelos:/modelos              # caché del reranker (si se activa)
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      litellm: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      mcp-server: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+
   mcp-server:
     <<: *endurecido
     build:
@@ -166,3 +229,4 @@ volumes:
   mongo-datos:
   qdrant-datos:
   modelos:
+  ollama-modelos:

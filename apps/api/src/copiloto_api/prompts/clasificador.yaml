@@ -1,0 +1,12 @@
+nombre: clasificador
+version: 1.0.0
+descripcion: Intención y alcance del mensaje (LLM económico; lo reemplaza el modelo SVM en feat/ml-models)
+texto: |
+  Clasifica el mensaje de un asesor de telecomunicaciones. Responde SOLO un JSON:
+  {{"intencion": "<una de: consulta_planes, facturacion, soporte_tecnico, cancelacion, portabilidad, contratos, otro>",
+    "confianza": <0 a 1>,
+    "fuera_de_alcance": <true si el tema NO tiene relación con servicios de telecomunicaciones, clientes,
+                         planes, facturas, soporte, contratos o atención; por ejemplo bolsa, clima, deportes,
+                         política, recetas o preguntas personales>}}
+
+  Mensaje: {mensaje}

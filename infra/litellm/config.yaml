@@ -1,0 +1,50 @@
+# LiteLLM proxy · gateway multi-LLM de Claro Copiloto (SAD 2.7, ADR-04).
+# La API pide alias ("economico", "alto", "embedding"); qué modelo hay detrás se decide AQUÍ, sin tocar
+# código. Cambiar de proveedor (Azure OpenAI, Claude, Gemini) = agregar una entrada y mover el alias.
+
+model_list:
+  # Respuesta RAG estándar, clasificación, resúmenes: mejor relación calidad/costo/latencia.
+  - model_name: economico
+    litellm_params:
+      model: openai/gpt-4.1-mini
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 30
+
+  # Razonamiento multi-tool (retención, datos del cliente) y LLM-as-judge de la evaluación.
+  - model_name: alto
+    litellm_params:
+      model: openai/gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 45
+
+  # Embeddings de consulta (mismo modelo con el que la ingesta indexó).
+  - model_name: embedding
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Open source local (perfil opcional `llm-local`: docker compose --profile llm-local up -d ollama).
+  - model_name: local
+    litellm_params:
+      model: ollama_chat/llama3.2:3b
+      api_base: http://ollama:11434
+      timeout: 60
+
+router_settings:
+  # alto → economico → local: degradación ordenada si un proveedor falla (timeout, 429, 5xx).
+  fallbacks:
+    - alto: ["economico"]
+    - economico: ["local"]
+  num_retries: 2
+  retry_after: 1
+  allowed_fails: 3      # fallas en 1 min antes de enfriar el despliegue (circuit breaker del proveedor)
+  cooldown_time: 30
+
+litellm_settings:
+  drop_params: true     # ignora parámetros que un proveedor no soporte (portabilidad entre modelos)
+  request_timeout: 60
+  num_retries: 2
+  turn_off_message_logging: true   # no registrar el contenido de los mensajes (Ley 1581)
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
