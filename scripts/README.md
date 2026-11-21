@@ -1,7 +1,7 @@
 # Scripts de utilidad
 
-**Tecnología:** Python (solo librería estándar)  
-**Fases del caso:** 4  
+**Tecnología:** Python (librería estándar; `smoke_mcp.py` usa el cliente FastMCP)  
+**Fases del caso:** 4, 7  
 **Estado:** en curso
 
 ## Responsabilidades
@@ -10,6 +10,18 @@
 |---|---|
 | `bootstrap_data.py` | Copia los insumos de la prueba a `data/raw/`: `py -3.13 scripts/bootstrap_data.py --source "<Insumos_Prueba_Consultor_IA>"` |
 | `smoke_mocks.py` | Prueba de humo de los mocks levantados con docker compose (ver abajo) |
+| `smoke_mcp.py` | Prueba de humo del servidor MCP por protocolo HTTP (ver abajo) |
+
+## smoke_mcp.py
+
+```powershell
+docker compose up -d mcp-server
+apps/mcp-server/.venv/Scripts/python scripts/smoke_mcp.py     # o: uv run --project apps/mcp-server python scripts/smoke_mcp.py
+```
+
+- Usa el cliente FastMCP (por eso corre con el venv de `apps/mcp-server`, no solo con la librería estándar).
+- 23 verificaciones: catálogo, PII filtrada, GQ-25 a GQ-28, confirmación firmada (token inventado, cambiado y reusado → rechazados), supervisor para ajustes > $50.000 y circuit breaker con el CRM caído.
+- Los tokens se emiten con `docker exec … python -m copiloto_mcp.confirmacion` (simula a la API). Al terminar reinicia los mocks; el circuito del CRM se cierra solo en ≤ 30 s.
 
 ## smoke_mocks.py
 
