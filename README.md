@@ -1,0 +1,87 @@
+# Claro Copiloto
+
+Asistente de IA generativa para asesores de atención y retención de una operadora de telecomunicaciones: responde con **citas a la fuente**, consulta **CRM y facturación** mediante herramientas **MCP**, clasifica la intención, sugiere la **oferta de retención** según la política vigente y **escala a un humano** cuando la confianza es baja o el tema es sensible.
+
+> Prueba técnica · Líder Técnico AI Senior. Todos los datos del caso son **sintéticos**; los insumos entregados para la prueba no se publican en este repositorio (ver [Datos](#datos)).
+
+![Arquitectura de referencia](docs/assets/slide_arquitectura_componentes.png)
+
+## Estado
+
+| Fase | Componente | Estado |
+|---|---|---|
+| 1–2 | Planteamiento y arquitectura ([SAD](docs/)) | ✅ |
+| 4 | Mocks CRM / Facturación / ERP + tools MCP | ⏳ |
+| 5–7 | Ingesta, RAG híbrido, agente LangGraph, memoria | ⏳ |
+| 3 | Front Angular del asesor | ⏳ |
+| 9 | Modelos de intención y churn (MLflow, drift) | ⏳ |
+| 8, 11 | LLMOps, trazas y tableros | ⏳ |
+| 10, 12–14 | Docker, pruebas, Terraform, CI/CD | ⏳ |
+
+## Inicio rápido
+
+> Se completa a medida que se construyen los servicios.
+
+```bash
+# 1. Variables de entorno (agregar OPENAI_API_KEY)
+cp .env.example .env
+
+# 2. Copiar los insumos de la prueba a data/raw (no versionados)
+python scripts/bootstrap_data.py --source "<ruta a Insumos_Prueba_Consultor_IA>"
+
+# 3. Levantar la solución completa
+docker compose up -d
+```
+
+## Estructura del repositorio
+
+```
+claro-copiloto/
+├── apps/
+│   ├── frontend/        Interfaz Angular del asesor (chat streaming, citas, ficha, feedback)
+│   ├── api/             FastAPI + agente LangGraph + prompts versionados
+│   ├── mcp-server/      Tools y skills MCP (CRM, facturación, retención, ERP)
+│   ├── mocks/           Servicios simulados CRM, facturación y ERP según OpenAPI
+│   ├── ingestion/       Watcher + worker: extracción, OCR, Whisper, PII, chunking, indexado
+│   └── ml-service/      API de intención y churn, monitoreo de drift
+├── ml/                  Entrenamiento, comparativa de algoritmos y fine-tuning
+├── eval/                Golden dataset y evaluación automática (gate de CI)
+├── infra/
+│   ├── terraform/       IaC Azure: módulos + ambientes dev/prod
+│   ├── litellm/         Ruteo multi-LLM y fallback
+│   ├── observability/   Prometheus, tableros y alertas de Grafana
+│   └── n8n/             Flujos de automatización (RPA)
+├── data/                inbox/ (carpeta vigilada) · raw/ (insumos, fuera de Git)
+├── scripts/             Utilidades: carga de datos, demo
+├── docs/                SAD, presentación y runbooks
+└── .github/workflows/   CI/CD
+```
+
+Cada carpeta principal tiene su propio `README.md` con propósito, ejecución y pruebas.
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| [docs/00_control_resumen.md](docs/00_control_resumen.md) | Control del documento y resumen ejecutivo |
+| [docs/01_planteamiento.md](docs/01_planteamiento.md) | Problema, actores, casos de uso, KPIs, riesgos, business case |
+| [docs/02_arquitectura.md](docs/02_arquitectura.md) | Vistas, flujo agéntico, RAG, multi-LLM, ML, seguridad, despliegue, ADR |
+| [docs/03_gestion_proyecto.md](docs/03_gestion_proyecto.md) | Plan, equipo, RACI, gobierno, criterios de aceptación, riesgos |
+| [docs/presentacion/](docs/presentacion/) | Presentación de la propuesta (PPT y PDF) |
+
+El PDF consolidado (SAD) se genera desde estos Markdown con [docs/build/build_sad.py](docs/build/build_sad.py).
+
+## Stack
+
+Python 3.12 · FastAPI · LangGraph · FastMCP · LiteLLM (OpenAI + Ollama) · Qdrant · Redis · MongoDB · scikit-learn · MLflow · Evidently · n8n · OpenTelemetry · Phoenix · Prometheus · Grafana · Angular · Docker Compose · Terraform (Azure) · GitHub Actions.
+
+Justificación de cada decisión: [docs/02_arquitectura.md · ADR](docs/02_arquitectura.md#216-decisiones-clave-adr-resumidos).
+
+## Datos
+
+Los documentos, transcripciones, audios, CSV, especificaciones OpenAPI y golden dataset entregados para la prueba **no se versionan** en este repositorio público. Para ejecutar la solución, cópielos localmente con `scripts/bootstrap_data.py`; quedan en `data/raw/`, excluido por `.gitignore`.
+
+## Seguridad
+
+- Ningún secreto se versiona: `.env` está excluido y en CI se usan GitHub Secrets.
+- La PII se anonimiza en la ingesta y nunca sale del servidor MCP hacia el LLM ni hacia los logs.
