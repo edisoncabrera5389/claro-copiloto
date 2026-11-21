@@ -13,7 +13,8 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 1–2 | Planteamiento y arquitectura ([SAD](docs/)) | ✅ |
 | 4 | [Mocks CRM / Facturación / ERP](apps/mocks/) (contrato, 429, 503, 409/403) | ✅ |
 | 4, 7 | [Servidor MCP](apps/mcp-server/): 11 tools, skill de retención, confirmación firmada, circuit breaker | ✅ |
-| 5–7 | Ingesta, RAG híbrido, agente LangGraph, memoria | ⏳ |
+| 5–6 | [Ingesta](apps/ingestion/): carpeta vigilada, OCR, Whisper, PII, chunking, índice híbrido, versionado, frescura ≈ 5 s | ✅ |
+| 6–7 | RAG híbrido con reranking, agente LangGraph, memoria | ⏳ |
 | 3 | Front Angular del asesor | ⏳ |
 | 9 | Modelos de intención y churn (MLflow, drift) | ⏳ |
 | 8, 11 | LLMOps, trazas y tableros | ⏳ |
@@ -32,6 +33,9 @@ python scripts/bootstrap_data.py --source "<ruta a Insumos_Prueba_Consultor_IA>"
 
 # 3. Levantar la solución completa
 docker compose up -d --build
+
+# 4. Carga inicial de la base de conocimiento (la ingesta la procesa sola)
+python scripts/sembrar_inbox.py
 ```
 
 | Servicio | URL local |
@@ -40,6 +44,8 @@ docker compose up -d --build
 | Facturación mock | http://localhost:8082/docs |
 | ERP mock | http://localhost:8083/docs |
 | Servidor MCP | http://localhost:8090/mcp · estado: http://localhost:8090/health |
+| Qdrant (índice) | http://localhost:6333/dashboard |
+| Ingesta | `docker compose exec ingesta-worker python -m ingesta estado` |
 
 ## Estructura del repositorio
 

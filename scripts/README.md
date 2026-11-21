@@ -1,7 +1,7 @@
 # Scripts de utilidad
 
 **Tecnología:** Python (librería estándar; `smoke_mcp.py` usa el cliente FastMCP)  
-**Fases del caso:** 4, 7  
+**Fases del caso:** 4, 5, 6, 7  
 **Estado:** en curso
 
 ## Responsabilidades
@@ -11,6 +11,20 @@
 | `bootstrap_data.py` | Copia los insumos de la prueba a `data/raw/`: `py -3.13 scripts/bootstrap_data.py --source "<Insumos_Prueba_Consultor_IA>"` |
 | `smoke_mocks.py` | Prueba de humo de los mocks levantados con docker compose (ver abajo) |
 | `smoke_mcp.py` | Prueba de humo del servidor MCP por protocolo HTTP (ver abajo) |
+| `sembrar_inbox.py` | Carga el corpus en la carpeta vigilada `data/inbox` (ver abajo) |
+
+## sembrar_inbox.py
+
+```powershell
+py -3.13 scripts/sembrar_inbox.py                 # carga inicial: documentos (DOCX y PDF), 50 transcripciones, 3 audios
+py -3.13 scripts/sembrar_inbox.py --sin-audios    # sin Whisper
+py -3.13 scripts/sembrar_inbox.py --catalogo-v2   # demo de frescura: llega el catálogo v2.0
+py -3.13 scripts/sembrar_inbox.py --quitar-v2     # ensayo: retira la v2 y vuelve a vigente la v1.0
+py -3.13 scripts/sembrar_inbox.py --limpiar       # vacía data/inbox (no toca el índice)
+```
+
+- Copia con `copyfile` (la fecha de modificación es la de llegada) y omite lo que ya está igual.
+- `--quitar-v2` borra el archivo de la carpeta y ejecuta `python -m ingesta revertir` en el worker.
 
 ## smoke_mcp.py
 

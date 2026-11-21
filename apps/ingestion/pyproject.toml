@@ -1,0 +1,64 @@
+[project]
+name = "copiloto-ingesta"
+version = "0.1.0"
+description = "Ingesta de Claro Copiloto: carpeta vigilada, extracción, OCR, ASR, PII, chunking e indexado híbrido"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-settings>=2.6",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+    "spacy>=3.8,<3.9",
+    # Modelo de español para Presidio (no está en PyPI): versión atada a spaCy 3.8.
+    "es-core-news-md @ https://github.com/explosion/spacy-models/releases/download/es_core_news_md-3.8.0/es_core_news_md-3.8.0-py3-none-any.whl",
+    "pytesseract>=0.3.13",
+    "faster-whisper>=1.1",
+    "openai>=1.60",
+    "qdrant-client>=1.13",
+    "redis>=5.2",
+    "pymongo>=4.10",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "fakeredis>=2.26",
+    "mongomock>=4.3",
+    "fpdf2>=2.8",
+    # ruff 0.17.x termina con access violation en la máquina de demo (Windows 11): se acota.
+    "ruff>=0.8,<0.17",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true  # modelo de spaCy por URL
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ingesta"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=ingesta --cov-report=term-missing"
+markers = [
+    "insumos: usa los insumos reales de data/raw (se omite si faltan)",
+    "pesado: requiere Tesseract o el modelo Whisper (se omite si faltan)",
+]
+
+[tool.coverage.run]
+omit = ["*/ingesta/__main__.py"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
