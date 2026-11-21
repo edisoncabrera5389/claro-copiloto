@@ -1,0 +1,6 @@
+{
+  "fuente": "CAT-2026 v1.0 (01/11/2026) y v2.0 (01/12/2026): Claro Max 25 GB se reemplaza por Claro Max 30 GB al mismo nivel",
+  "nota": "Orden de planes para el upgrade de retención. Triple Play 500 no tiene plan superior en el catálogo.",
+  "hogar": [["Hogar Fibra 300"], ["Hogar Fibra 500"], ["Hogar Fibra 900"]],
+  "movil": [["Claro Max 25 GB", "Claro Max 30 GB"], ["Claro Max 60 GB"], ["Claro Max Ilimitado"]]
+}

@@ -4,11 +4,20 @@
 
 name: claro-copiloto
 
+# Endurecimiento común: sistema de archivos de solo lectura, sin capacidades ni escalamiento de privilegios.
+x-endurecido: &endurecido
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [copiloto]
+
 x-mock: &mock
+  <<: *endurecido
   build:
     context: ./apps/mocks
   image: claro-copiloto/mocks:${IMAGE_TAG:-local}
-  restart: unless-stopped
   environment: &mock-env
     MOCKS_API_KEY: ${MOCKS_API_KEY:?Defina MOCKS_API_KEY en .env}
     MOCKS_FAIL_RATE: ${MOCKS_FAIL_RATE:-0.02}
@@ -17,17 +26,31 @@ x-mock: &mock
   volumes:
     # Datos sintéticos de la prueba (no versionados), solo lectura.
     - ./data/raw/04_apis/datos_mock:/data:ro
-  # Endurecimiento: sistema de archivos de solo lectura, sin capacidades ni escalamiento de privilegios.
-  read_only: true
-  tmpfs: [/tmp]
-  cap_drop: [ALL]
-  security_opt: [no-new-privileges:true]
-  networks: [copiloto]
   deploy:
     resources:
       limits: { cpus: "0.5", memory: 192M }
 
 services:
+  mcp-server:
+    <<: *endurecido
+    build:
+      context: ./apps/mcp-server
+    image: claro-copiloto/mcp-server:${IMAGE_TAG:-local}
+    environment:
+      MCP_CRM_URL: http://crm-mock:8081/v1
+      MCP_FACTURACION_URL: http://facturacion-mock:8082/v1
+      MCP_MOCKS_API_KEY: ${MOCKS_API_KEY:?Defina MOCKS_API_KEY en .env}
+      MCP_CONFIRMACION_SECRET: ${MCP_CONFIRMACION_SECRET:?Defina MCP_CONFIRMACION_SECRET en .env}
+      MCP_CONFIRMACION_TTL_S: ${MCP_CONFIRMACION_TTL_S:-300}
+      MCP_FECHA_REFERENCIA: ${MOCKS_FECHA_REFERENCIA:-2026-11-18}
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on:
+      crm-mock: { condition: service_healthy }
+      facturacion-mock: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
   crm-mock:
     <<: *mock
     environment:

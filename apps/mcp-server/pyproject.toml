@@ -1,0 +1,48 @@
+[project]
+name = "copiloto-mcp"
+version = "0.1.0"
+description = "Servidor MCP de Claro Copiloto: tools de CRM y Facturación, skill de retención y confirmación firmada"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.12",
+    "httpx>=0.28",
+    "pydantic-settings>=2.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "respx>=0.22",
+    # ruff 0.17.x termina con access violation en la máquina de demo (Windows 11): se acota.
+    "ruff>=0.8,<0.17",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copiloto_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --cov=copiloto_mcp --cov-report=term-missing"
+markers = ["integracion: requiere los mocks levantados con docker compose"]
+
+[tool.coverage.run]
+omit = ["*/copiloto_mcp/__main__.py"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
