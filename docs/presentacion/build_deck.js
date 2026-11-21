@@ -1,12 +1,13 @@
 ﻿// Genera la PPT de arquitectura "Claro Copiloto".
-// Uso: NODE_PATH=<node_modules> node build_deck.js
+// Uso: node build_deck.js  (requiere pptxgenjs, react-icons, react, react-dom, sharp)
 const path = require("path");
 const pptxgen = require("pptxgenjs");
 const React = require("react");
 const ReactDOMServer = require("react-dom/server");
 const sharp = require("sharp");
 const fa = require("react-icons/fa");
-const { applyTheme } = require(process.env.APPLY_THEME);
+// Opcional: módulo que escribe la paleta en el tema del .pptx
+const applyTheme = process.env.APPLY_THEME ? require(process.env.APPLY_THEME).applyTheme : null;
 
 const OUT = path.join(__dirname, "Claro_Copiloto_Arquitectura.pptx");
 
@@ -539,6 +540,6 @@ const tblHead = (cells, fill) => cells.map((c) => ({ text: c, options: { bold: t
   s.addNotes("Decisiones con su alternativa descartada. Build vs buy: construyo la orquestación, que es el diferencial y donde viven las reglas de negocio, y compro los modelos y servicios administrados. Propietario vs open source: OpenAI por calidad, modelos abiertos como fallback y opción on-premise. Contenedores vs serverless: los modelos cargados en memoria y el streaming piden contenedores; la ingesta sí es por evento. LangGraph por tener el flujo explícito y human-in-the-loop nativo. MCP para desacoplar las herramientas del agente. LiteLLM para no casarse con un proveedor. Qdrant por búsqueda híbrida nativa y open source. Redis más MongoDB por patrones de acceso. Phoenix porque Langfuse autohospedado requiere ClickHouse, Postgres y MinIO. Container Apps sobre AKS por operación. Roadmap: MVP en cuatro semanas, piloto A/B con 200 asesores, luego canales de cliente final y datos de red en tiempo real, y a nivel regional multipaís por tenant y voz. Para 10.000 asesores concurrentes: servicios sin estado con autoscaling, cuotas LLM multi-región y caché. Gracias, pasamos a la demo.");
 
   await pres.writeFile({ fileName: OUT });
-  await applyTheme(OUT, THEME);
+  if (applyTheme) await applyTheme(OUT, THEME);
   console.log("OK " + OUT);
 })().catch((e) => { console.error(e); process.exit(1); });

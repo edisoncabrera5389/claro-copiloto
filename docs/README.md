@@ -25,4 +25,11 @@ Salida en `docs/build/out/` (no versionada). Los glosarios de los capítulos 1 y
 
 ## Generar la presentación
 
-`presentacion/build_deck.js` usa `pptxgenjs`, `react-icons` y `sharp`, y la utilidad `apply_theme.js` del skill de PowerPoint utilizado para construirla (ruta en la variable `APPLY_THEME`).
+`presentacion/build_deck.js` usa `pptxgenjs`, `react-icons` y `sharp`:
+
+```bash
+npm i pptxgenjs react-icons react react-dom sharp
+node docs/presentacion/build_deck.js
+```
+
+Opcional: la variable `APPLY_THEME` puede apuntar a un módulo que escriba la paleta en el tema del archivo; sin ella, la presentación se genera igual.
