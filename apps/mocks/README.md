@@ -82,4 +82,6 @@ uv run ruff check . && uv run ruff format --check .
 - **Resiliencia**: 401, 429 con ventana deslizante y reloj simulado, tasa de 503 ≈ 2 % con semilla, `/_admin`.
 - **PII**: los logs y los errores 400 no contienen documento, celular, correo ni query string.
 
+Contra los contenedores en ejecución: `py -3.13 scripts/smoke_mocks.py` desde la raíz (ver [scripts/README.md](../../scripts/README.md)).
+
 Las pruebas de CRM y Facturación usan los insumos de `data/raw/04_apis`; si no están, se omiten con aviso. Las del ERP no los necesitan.
