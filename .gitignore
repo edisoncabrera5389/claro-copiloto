@@ -11,6 +11,8 @@ data/raw/
 data/inbox/*
 !data/inbox/.gitkeep
 data/processed/
+# Reportes de evaluación: incluyen las preguntas y respuestas del golden (insumo de la prueba)
+eval/reportes/
 
 # --- Python ---
 __pycache__/

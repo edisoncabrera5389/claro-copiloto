@@ -12,6 +12,7 @@
 | `smoke_mocks.py` | Prueba de humo de los mocks levantados con docker compose (ver abajo) |
 | `smoke_mcp.py` | Prueba de humo del servidor MCP por protocolo HTTP (ver abajo) |
 | `sembrar_inbox.py` | Carga el corpus en la carpeta vigilada `data/inbox` (ver abajo) |
+| `smoke_api.py` | Prueba de humo de la API de punta a punta: RAG con cita, inyección, visita técnica propuesta → confirmada → ticket en el CRM, ajuste > $50.000 que solo confirma el supervisor (12 verificaciones, solo librería estándar) |
 
 ## sembrar_inbox.py
 
