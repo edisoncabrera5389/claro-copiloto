@@ -18,7 +18,7 @@ dev = [
     "pyyaml>=6.0",
     "jsonschema>=4.23",
     # ruff 0.17.x termina con access violation en la máquina de demo (Windows 11): se acota.
-    "ruff>=0.8,<0.17",
+    "ruff>=0.8,<0.18",
 ]
 
 [build-system]
