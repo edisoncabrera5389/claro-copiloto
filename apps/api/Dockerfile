@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # API FastAPI + agente LangGraph (puerto 8000). El modelo del reranker (opcional) se descarga a /modelos.
 
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -15,7 +15,7 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim AS runtime
 LABEL org.opencontainers.image.title="claro-copiloto-api" \
       org.opencontainers.image.description="API y agente de Claro Copiloto (LangGraph, RAG híbrido, guardrails)" \
       org.opencontainers.image.source="https://github.com/edisoncabrera5389/claro-copiloto"
