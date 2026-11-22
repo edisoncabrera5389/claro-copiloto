@@ -188,9 +188,25 @@ def test_drift_detecta_cambio_y_muestras(cliente):
     r = cliente.get("/drift", params={"modelo": "churn"}).json()
     assert r["inferencias"] == 40 and r["alerta"] and "dias_mora" in r["variables_con_drift"]
     assert r["psi"]["valor_mensual"] is None  # sin datos en la muestra actual (todo imputado)
+    assert r["psi"]["metodo_pago"] is None  # categórica sin datos: no es drift (antes daba PSI 17)
     muestras = cliente.get("/drift/muestras", params={"modelo": "churn"}).json()
     assert len(muestras) == 40 and muestras[0]["dias_mora"] == 85.0
     assert cliente.get("/drift", params={"modelo": "intencion"}).json()["inferencias"] == 0
+
+
+def test_metricas_prometheus_con_drift(cliente):
+    cliente.post("/intencion", json={"texto": "quiere portar su número"})
+    for _ in range(40):
+        cliente.post("/churn", json={"caracteristicas": {"dias_mora": 85.0, "tipo_servicio": "hogar"}})
+    texto = cliente.get("/metrics").text
+    assert 'ml_inferencias_total{modelo="churn",resultado=' in texto
+    assert 'ml_modelo_cargado{modelo="churn",version="1"} 1.0' in texto
+    assert 'ml_drift_inferencias{modelo="churn"} 40.0' in texto
+    linea = next(
+        ln for ln in texto.splitlines() if ln.startswith('ml_drift_psi{modelo="churn",variable="dias_mora"}')
+    )
+    assert float(linea.split()[-1]) > 0.2  # la población cambió: el PSI lo refleja para la alerta
+    assert "ml_confianza_intencion_bucket" in texto and "ml_latencia_segundos_bucket" in texto
 
 
 def test_modelo_faltante_degrada_sin_tumbar_el_servicio():

@@ -63,11 +63,15 @@ Contenedores: imagen multi-stage (**1,65 GB**: Tesseract `spa`, spaCy, faster-wh
 
 **Resultado con el corpus real** (embeddings de OpenAI): 13 documentos de conocimiento + 53 transcripciones (50 TXT + 3 audios), 6 PDF como alternos, 123 fragmentos vigentes, 0 eventos fallidos. La búsqueda híbrida devuelve las fuentes del golden: "luz LOS en rojo" → manual del módem (tabla LED) + Política de Escalamiento (GQ-18); "error E-202" → FAQ + manual del decodificador + correo de refresco de señal (GQ-21); "Chapinero 12 de noviembre" → correo del incidente (GQ-24).
 
+## Métricas (Prometheus)
+
+El worker expone `http://ingesta-worker:9101/metrics` (red interna) con la librería estándar, sin dependencias nuevas que obliguen a reconstruir la imagen pesada: documentos por resultado, errores, **frescura** (histograma y último documento; meta ≤ 15 min, alerta `FrescuraDeIngesta`), eventos pendientes en la cola y en la dead-letter. La frescura aparece con el primer documento indexado tras el arranque (p. ej. el catálogo v2 de la demo).
+
 ## Pruebas
 
 ```powershell
 cd apps/ingestion
-uv run pytest                    # 90 pruebas: sintéticas + corpus real si hay insumos (cobertura 99 %)
+uv run pytest                    # 91 pruebas: sintéticas + corpus real si hay insumos (cobertura 98 %)
 uv run ruff check . ; uv run ruff format --check .
 ```
 

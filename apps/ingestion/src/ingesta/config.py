@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     stream: str = "ingesta:eventos"
     stream_fallidos: str = "ingesta:fallidos"
+    metricas_puerto: int = 9101  # Prometheus (solo red interna)
     grupo: str = "workers"
     max_intentos: int = Field(default=3, ge=1)
 

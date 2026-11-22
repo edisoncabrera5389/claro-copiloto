@@ -91,9 +91,21 @@ def reencolar_fallidos(s: Settings, redis: Any) -> list[str]:
 
 class Worker:
     def __init__(
-        self, s: Settings, redis: Any, procesar: Callable[..., dict[str, Any]], consumidor: str = "worker-1"
+        self,
+        s: Settings,
+        redis: Any,
+        procesar: Callable[..., dict[str, Any]],
+        consumidor: str = "worker-1",
+        metricas: Any = None,
     ):
         self.s, self.r, self._procesar, self.consumidor = s, redis, procesar, consumidor
+        self.metricas = metricas
+
+    def estado_cola(self) -> dict[str, float]:
+        """Para Prometheus: eventos sin leer por el grupo (lag) y eventos en la dead-letter."""
+        grupos = {g["name"]: g for g in self.r.xinfo_groups(self.s.stream)}
+        lag = grupos.get(self.s.grupo, {}).get("lag")
+        return {"pendientes": float(lag or 0), "fallidos": float(self.r.xlen(self.s.stream_fallidos))}
 
     def asegurar_grupo(self) -> None:
         try:
@@ -127,7 +139,11 @@ class Worker:
                 r.get("fragmentos", 0),
                 r.get("frescura_s"),
             )
+            if self.metricas:
+                self.metricas.documento(r.get("resultado") or "?", r.get("frescura_s"))
         except Exception as e:
+            if self.metricas:
+                self.metricas.error()
             destino = self.s.stream if intento < self.s.max_intentos else self.s.stream_fallidos
             self.r.xadd(
                 destino, {**campos, "intento": str(intento + 1), "error": f"{type(e).__name__}: {e}"[:500]}

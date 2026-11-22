@@ -3,7 +3,7 @@
 POST /auth/login · POST /chat (SSE) · POST /chat/sincrono · GET /acciones/pendientes ·
 POST /acciones/{id}/confirmar · POST /acciones/{id}/rechazar · POST /feedback ·
 GET /conversaciones/{sesion} · GET /clientes/{id}/ficha · POST|GET /escalamientos ·
-POST /escalamientos/{id}/atender · GET /health · GET /health/vivo
+POST /escalamientos/{id}/atender · GET /metrics · GET /health · GET /health/vivo
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Request
+from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -31,12 +31,26 @@ from copiloto_api.llm import ClienteLLM
 from copiloto_api.mcp_cliente import ClienteMCP
 from copiloto_api.memoria import Memoria
 from copiloto_api.ml_cliente import ClienteML
+from copiloto_api.notificador import Notificador
+from copiloto_api.observabilidad import Metricas, configurar_trazas, marcar_error, span
 from copiloto_api.pii import redactar
 from copiloto_api.rag import Retriever
 from copiloto_api.seguridad import Usuario, autenticar, emitir_jwt, usuario_actual
 
 log = logging.getLogger("copiloto_api")
 ERRORES_TRANSITORIOS = ("CIRCUITO_ABIERTO", "SIN_CONEXION", "SERVICIO_NO_DISPONIBLE", "LIMITE_EXCEDIDO")
+# Campos que pueden salir hacia n8n/ERP: identificadores, códigos y montos (nunca texto libre ni PII).
+CAMPOS_RPA = (
+    "cliente_id",
+    "factura_id",
+    "valor",
+    "categoria",
+    "prioridad",
+    "escalar_a",
+    "codigo",
+    "servicio_id",
+)
+CAMPOS_RESULTADO_RPA = ("ticket_id", "ajuste_id", "oferta_id", "estado")
 
 
 @dataclass
@@ -46,6 +60,7 @@ class Dependencias:
     mcp: ClienteMCP
     memoria: Memoria
     ml: ClienteML
+    notificador: Notificador | None = None  # n8n (RPA); None → se arma con API_N8N_URL
 
 
 class Login(BaseModel):
@@ -84,6 +99,27 @@ def _construir_dependencias(s: Settings) -> Dependencias:  # pragma: no cover - 
     return Dependencias(llm, retriever, ClienteMCP(s.mcp_url), memoria, ClienteML(s.ml_url, s.ml_timeout_s))
 
 
+def anotar_traza(raiz: Any, r: dict[str, Any], final: dict[str, Any]) -> None:
+    """Resumen del turno en el span raíz. Entrada = texto ENMASCARADO (el mismo que ve el LLM)."""
+    raiz.set_attribute("session.id", r["sesion_id"])
+    raiz.set_attribute("input.value", final.get("mensaje_llm", ""))
+    raiz.set_attribute("output.value", r["respuesta"])
+    raiz.set_attribute("llm.token_count.prompt", r["uso"]["tokens_entrada"])
+    raiz.set_attribute("llm.token_count.completion", r["uso"]["tokens_salida"])
+    raiz.set_attribute("llm.token_count.total", r["uso"]["tokens_entrada"] + r["uso"]["tokens_salida"])
+    for clave in ("ruta", "motivo", "intencion", "cliente_id", "modelo", "confianza", "sin_cita"):
+        if r.get(clave) is not None:
+            raiz.set_attribute(f"copiloto.{clave}", r[clave])
+    raiz.set_attribute("copiloto.origen_intencion", final.get("origen_intencion") or "")
+    raiz.set_attribute("copiloto.costo_usd", r["uso"]["costo_usd"])
+    raiz.set_attribute("copiloto.ttft_ms", r["latencias"]["ttft_ms"])
+    raiz.set_attribute("copiloto.fuentes", ", ".join(f"{f['fuente']} v{f['version']}" for f in r["fuentes"]))
+    raiz.set_attribute("copiloto.tools", ", ".join(t["nombre"] for t in r["tools"]))
+    raiz.set_attribute("metadata", json.dumps({"prompts": prompts.versiones()}))
+    if r["ruta"] == "bloqueado":
+        raiz.set_attribute("copiloto.bloqueo", "prompt_injection")
+
+
 def _cargar_reranker(s: Settings, retriever: Retriever, estado: dict[str, str]) -> None:  # pragma: no cover
     """En segundo plano: la primera vez descarga el modelo (~0,6 GB). Mientras tanto se busca sin rerank."""
     try:
@@ -103,6 +139,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
     async def ciclo(app: FastAPI):
         d = deps or _construir_dependencias(s)
         app.state.deps = d
+        app.state.notificador = d.notificador or Notificador(s.n8n_url)
         app.state.estado = {"reranker": "desactivado" if not s.reranker_activo else "cargando"}
         if s.reranker_activo and d.retriever.reranker is None:
             threading.Thread(
@@ -121,8 +158,17 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
             log.warning("Retriever no disponible al arrancar: %s", type(e).__name__)
         yield
 
-    app = FastAPI(title="Claro Copiloto API", version="0.1.0", lifespan=ciclo)
+    configurar_trazas(s.otel_endpoint, s.otel_proyecto)
+    # Sin la telemetría nativa de FastAPI: sus spans HTTP (incluido GET /metrics cada 15 s y los healthchecks)
+    # tapaban en Phoenix las trazas del agente. La traza útil empieza en el span "turno".
+    app = FastAPI(
+        title="Claro Copiloto API",
+        version="0.1.0",
+        lifespan=ciclo,
+        telemetry={"tracing": False, "metrics": False, "logs": False},
+    )
     app.state.settings = s
+    app.state.metricas = metricas = Metricas()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:4200", "http://localhost:8080"],
@@ -141,9 +187,66 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 429, "Demasiadas solicitudes; espera un minuto", headers={"Retry-After": "60"}
             )
 
+    async def registrar_escalamiento(
+        request: Request,
+        sesion_id: str,
+        turno_id: str | None,
+        cliente_id: str | None,
+        usuario: str,
+        origen: str,
+        motivo: str,
+    ) -> str:
+        """Cola del supervisor (Mongo) + métrica + evento a n8n. Motivo redactado (Ley 1581)."""
+        motivo = redactar(motivo)
+        eid = await deps_de(request).memoria.registrar_escalamiento(
+            {
+                "sesion_id": sesion_id,
+                "turno_id": turno_id,
+                "cliente_id": cliente_id,
+                "motivo": motivo,
+                "origen": origen,
+                "usuario": usuario,
+                "fecha": datetime.now(UTC),
+            }
+        )
+        if origen == "manual":
+            metricas.escalamientos.labels("manual", "MANUAL").inc()
+        request.app.state.notificador.enviar(
+            "escalamiento",
+            {
+                "escalamiento_id": eid,
+                "origen": origen,
+                "cliente_id": cliente_id,
+                "motivo": motivo,
+                "asesor": usuario,
+                "sesion_id": sesion_id,
+            },
+        )
+        return eid
+
     # ------------------------------------------------------------------ turno -------------
     async def ejecutar_turno(
         request: Request, u: Usuario, m: Mensaje, enviar: Callable[[str, dict[str, Any]], Awaitable[None]]
+    ) -> dict[str, Any]:
+        """Un turno = una traza en Phoenix (span AGENT raíz) + métricas + auditoría con el trace_id."""
+        metricas.en_curso.inc()
+        try:
+            with span("turno", "AGENT", **{"user.id": u.id}) as raiz:
+                try:
+                    return await _turno(request, u, m, enviar, raiz)
+                except Exception as e:
+                    metricas.errores_turno.inc()
+                    marcar_error(raiz, type(e).__name__)
+                    raise
+        finally:
+            metricas.en_curso.dec()
+
+    async def _turno(
+        request: Request,
+        u: Usuario,
+        m: Mensaje,
+        enviar: Callable[[str, dict[str, Any]], Awaitable[None]],
+        raiz: Any,
     ) -> dict[str, Any]:
         d = deps_de(request)
         sesion_id = m.sesion_id or uuid.uuid4().hex[:16]
@@ -190,6 +293,9 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
             "uso": uso,
             "latencias": {"ttft_ms": round((ttft or total) * 1000), "total_ms": round(total * 1000)},
         }
+        trace_id = format(raiz.get_span_context().trace_id, "032x")
+        anotar_traza(raiz, resultado, final)
+        metricas.registrar_turno(resultado, final.get("origen_intencion"))
         await d.memoria.agregar_turno(sesion_id, final.get("mensaje_llm", ""), resultado["respuesta"])
         await d.memoria.auditar_turno(
             {
@@ -205,12 +311,25 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 "citadas": final.get("citadas", []),
                 "prompt_versions": prompts.versiones(),
                 "reranker": request.app.state.estado.get("reranker"),
+                "trace_id": trace_id,  # auditoría ↔ traza en Phoenix
             }
         )
+        if resultado["ruta"] == "escalar" and resultado["motivo"] != "BAJA_CONFIANZA":
+            # Escalamiento obligatorio por política: entra solo a la cola del supervisor y dispara n8n.
+            await registrar_escalamiento(
+                request,
+                sesion_id,
+                turno_id,
+                resultado["cliente_id"],
+                u.id,
+                "politica",
+                f"{resultado['motivo']}: {final.get('detalle') or 'escalamiento obligatorio'}",
+            )
         log.info(
             json.dumps(
                 {
                     "turno": turno_id,
+                    "trace_id": trace_id,
                     "ruta": resultado["ruta"],
                     "intencion": resultado["intencion"],
                     "tools": [t["nombre"] for t in resultado["tools"]],
@@ -311,6 +430,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 "fecha": datetime.now(UTC),
             }
         )
+        metricas.acciones.labels(p["accion"], "ejecutada" if ok else "error").inc()
         if not ok:
             if error and error.startswith(ERRORES_TRANSITORIOS):
                 await d.memoria.devolver_propuesta(p)  # no se aplicó: puede reintentar
@@ -318,6 +438,22 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 502 if error and error.startswith(ERRORES_TRANSITORIOS) else 409,
                 error or "La acción no se pudo ejecutar",
             )
+        # RPA (n8n → ERP): visita técnica → orden de servicio; ajuste → nota crédito. Solo campos permitidos.
+        # El MCP anida la respuesta del sistema (ticket, ajuste) en "resultado".
+        resultado_rpa = datos.get("resultado") if isinstance(datos, dict) else None
+        resultado_rpa = resultado_rpa if isinstance(resultado_rpa, dict) else {}
+        request.app.state.notificador.enviar(
+            "accion-confirmada",
+            {
+                "accion": p["accion"],
+                "propuesta_id": pid,
+                "cliente_id": p.get("cliente_id") or p["parametros"].get("cliente_id"),
+                "confirmada_por": u.id,
+                "rol": u.rol,
+                "parametros": {k: p["parametros"][k] for k in CAMPOS_RPA if k in p["parametros"]},
+                "resultado": {k: resultado_rpa[k] for k in CAMPOS_RESULTADO_RPA if k in resultado_rpa},
+            },
+        )
         return {"estado": "ejecutada", "accion": p["accion"], "resultado": datos}
 
     @app.post("/acciones/{pid}/rechazar")
@@ -337,6 +473,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 "fecha": datetime.now(UTC),
             }
         )
+        metricas.acciones.labels(p["accion"], "rechazada").inc()
         return {"estado": "rechazada"}
 
     @app.post("/feedback")
@@ -345,6 +482,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
         if await d.memoria.turno(f.turno_id) is None:
             raise HTTPException(404, "Turno no encontrado")
         await d.memoria.registrar_feedback({**f.model_dump(), "usuario": u.id, "fecha": datetime.now(UTC)})
+        metricas.feedback.labels("positivo" if f.valor == 1 else "negativo").inc()
         return {"estado": "registrado"}
 
     @app.get("/conversaciones/{sesion_id}")
@@ -379,17 +517,15 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
     @app.post("/escalamientos")
     async def escalar(e: Escalamiento, request: Request, u: UsuarioActual) -> dict[str, str]:
         """Botón "Escalar" del asesor: el caso entra a la cola del supervisor con el contexto del turno."""
-        d = deps_de(request)
-        ultimo = await d.memoria.ultimo_turno(e.sesion_id, u.id) or {}
-        eid = await d.memoria.registrar_escalamiento(
-            {
-                "sesion_id": e.sesion_id,
-                "turno_id": ultimo.get("turno_id"),
-                "cliente_id": ultimo.get("cliente_id"),
-                "motivo": redactar(e.motivo or "Escalamiento manual del asesor"),  # Ley 1581
-                "usuario": u.id,
-                "fecha": datetime.now(UTC),
-            }
+        ultimo = await deps_de(request).memoria.ultimo_turno(e.sesion_id, u.id) or {}
+        eid = await registrar_escalamiento(
+            request,
+            e.sesion_id,
+            ultimo.get("turno_id"),
+            ultimo.get("cliente_id"),
+            u.id,
+            "manual",
+            e.motivo or "Escalamiento manual del asesor",
         )
         return {"escalamiento_id": eid, "estado": "abierto"}
 
@@ -404,6 +540,13 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
         if not await deps_de(request).memoria.atender_escalamiento(eid, u.id, datetime.now(UTC)):
             raise HTTPException(404, "El escalamiento no existe o ya fue atendido")
         return {"estado": "atendido"}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        """Prometheus (red interna; Nginx no lo expone hacia el navegador)."""
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        return Response(generate_latest(metricas.registro), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/health/vivo")
     async def vivo() -> dict[str, str]:

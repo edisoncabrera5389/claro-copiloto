@@ -1,0 +1,59 @@
+{
+ "id": "CopilotoAlertasAcc",
+ "name": "Copiloto · Alertas → acción",
+ "active": true,
+ "nodes": [
+  {
+   "id": "0a30ac62-c40b-5dd7-8081-d93359602a33",
+   "name": "Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "webhookId": "d10f372a-08b1-5347-880c-72016278ae2d",
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "alertas",
+    "responseMode": "onReceived",
+    "options": {}
+   }
+  },
+  {
+   "id": "ffbae23e-8ce9-53cf-b11b-3cf2d4423237",
+   "name": "Decidir acción",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Webhook de Alertmanager: decide la acción por alerta (SAD 2.14: drift → reentrenamiento).\nreturn ($json.body.alerts || []).map((a) => {\n  const nombre = a.labels.alertname;\n  let accion = `Notificar al equipo de ${a.labels.equipo || 'plataforma'}`;\n  if (a.status === 'firing' && nombre === 'DriftDeModelo') {\n    accion = `Abrir solicitud de reentrenamiento del modelo ${a.labels.modelo}: informe Evidently + `\n           + 'pipeline de ML (producción: workflow_dispatch de GitHub Actions)';\n  }\n  if (a.status === 'firing' && a.labels.severidad === 'critica') accion += ' · avisar a la guardia';\n  if (a.status === 'resolved') accion = 'Cerrar el incidente';\n  return { json: { alerta: nombre, estado: a.status, severidad: a.labels.severidad,\n                   resumen: a.annotations.resumen, recomendacion: a.annotations.accion, accion } };\n});\n"
+   }
+  }
+ ],
+ "connections": {
+  "Webhook": {
+   "main": [
+    [
+     {
+      "node": "Decidir acción",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "all"
+ },
+ "meta": {
+  "descripcion": "Recibe las alertas de Alertmanager (Prometheus) y decide la acción; drift → solicitud de reentrenamiento."
+ },
+ "pinData": {},
+ "tags": []
+}

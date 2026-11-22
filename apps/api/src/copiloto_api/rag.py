@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from copiloto_api import dispersos
 from copiloto_api.config import Settings
+from copiloto_api.observabilidad import documentos_recuperados, span
 
 
 @dataclass
@@ -112,7 +113,12 @@ class Retriever:
     async def buscar(
         self, consulta: str, k: int | None = None, incluir_transcripciones: bool = False
     ) -> list[Fragmento]:
-        k = k or self.s.k_final
+        with span("buscar_conocimiento", "RETRIEVER", **{"input.value": consulta}) as s:
+            fragmentos = await self._buscar(consulta, k or self.s.k_final, incluir_transcripciones)
+            documentos_recuperados(s, fragmentos)
+            return fragmentos
+
+    async def _buscar(self, consulta: str, k: int, incluir_transcripciones: bool) -> list[Fragmento]:
         vector = await self.embedder.embed(consulta)
         candidatos = await asyncio.to_thread(self._consultar, vector, consulta, incluir_transcripciones)
         if self.reranker and candidatos:

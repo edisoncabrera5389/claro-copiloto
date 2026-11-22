@@ -158,3 +158,34 @@ def test_error_inesperado_al_crear_grupo(settings):
 
     with pytest.raises(ConnectionError):
         Worker(settings, RedisRoto(), lambda *a, **k: {}).asegurar_grupo()
+
+
+def test_metricas_del_worker_en_formato_prometheus(settings, redis):
+    import urllib.request
+
+    from ingesta.metricas import Metricas
+
+    llamadas = iter([{"resultado": "indexado", "frescura_s": 4.2}, RuntimeError("PDF dañado")])
+
+    def procesar(ruta, **_):
+        r = next(llamadas)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    m = Metricas()
+    w = Worker(settings, redis, procesar, metricas=m)
+    m._cola = w.estado_cola
+    w.asegurar_grupo()
+    redis.xadd(settings.stream, {"ruta": "a.md", "t_detectado": "2026-11-21T12:00:00+00:00"})
+    redis.xadd(settings.stream, {"ruta": "b.pdf", "t_detectado": "2026-11-21T12:00:00+00:00"})
+    w.procesar_lote(bloqueo_ms=10)
+    servidor = m.servir(0)  # puerto libre
+    try:
+        texto = urllib.request.urlopen(f"http://127.0.0.1:{servidor.server_port}/metrics").read().decode()
+    finally:
+        servidor.shutdown()
+    assert 'ingesta_documentos_total{resultado="indexado"} 1' in texto
+    assert "ingesta_errores_total 1" in texto and "ingesta_frescura_ultima_segundos 4.2" in texto
+    assert 'ingesta_frescura_segundos_bucket{le="5.0"} 1' in texto
+    assert "ingesta_cola_pendientes 1.0" in texto  # el reintento de b.pdf volvió a la cola
