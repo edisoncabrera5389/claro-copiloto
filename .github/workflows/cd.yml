@@ -25,7 +25,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: despliegue-demo
@@ -51,16 +50,18 @@ jobs:
         with:
           ref: ${{ env.SHA }}
 
+      # Windows PowerShell 5.1: lee los scripts de los pasos como ANSI y Out-File -Encoding utf8 escribe BOM
+      # (vistos en el primer despliegue: tildes rotas en el resumen). Por eso los scripts son solo ASCII
+      # (tildes del resumen como entidades HTML) y GITHUB_ENV/OUTPUT/SUMMARY se escriben con AppendAllText (sin BOM).
       - name: Configuración local del runner (.env e insumos fuera del repo)
         run: |
-          # Variables de la máquina (archivo .env del runner): COPILOTO_ENV_FILE y COPILOTO_DATOS
+          # Variables de la maquina (archivo .env del runner): COPILOTO_ENV_FILE y COPILOTO_DATOS
           if (-not (Test-Path $env:COPILOTO_ENV_FILE)) { throw "Falta COPILOTO_ENV_FILE en el runner" }
           if (-not (Test-Path "$env:COPILOTO_DATOS\raw\04_apis")) { throw "Faltan los insumos en COPILOTO_DATOS" }
-          Copy-Item $env:COPILOTO_ENV_FILE .env    # se borra al final (paso "Limpieza")
+          Copy-Item $env:COPILOTO_ENV_FILE .env    # se borra al final (paso Limpieza)
           $owner = "${{ github.repository_owner }}".ToLower()
-          "REGISTRY=ghcr.io/$owner/claro-copiloto" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "IMAGE_TAG=$env:SHA" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "T_INICIO=$((Get-Date).ToUniversalTime().ToString('o'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $inicio = (Get-Date).ToUniversalTime().ToString('o')
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "REGISTRY=ghcr.io/$owner/claro-copiloto`nIMAGE_TAG=$env:SHA`nT_INICIO=$inicio`n")
 
       - name: Versión en ejecución (para el rollback)
         id: previa
@@ -68,25 +69,23 @@ jobs:
           $imagen = docker inspect claro-copiloto-api-1 --format '{{.Config.Image}}' 2>$null
           if ($LASTEXITCODE -eq 0 -and $imagen) {
             $registro, $tag = $imagen -replace '/api:', '|' -split '\|'
-            "registry=$registro" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-            "tag=$tag" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-            Write-Output "En ejecución: $imagen"
-          } else { Write-Output "No hay una versión previa en ejecución" }
+            [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "registry=$registro`ntag=$tag`n")
+            Write-Output "En ejecucion: $imagen"
+          } else { Write-Output "No hay una version previa en ejecucion" }
           exit 0
 
       - name: Descargar imágenes del commit desde GHCR
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $env:TOKEN | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Paquetes publicos (repo publico): descarga anonima. Con PowerShell 5.1, `$token | docker login
+          # --password-stdin` agrega CRLF al token y GHCR responde "denied" (primer despliegue).
+          Write-Output "Imagenes: $env:REGISTRY/*:$env:IMAGE_TAG"
           docker compose pull crm-mock facturacion-mock erp-mock mcp-server ingesta-watcher ingesta-worker api ml-service frontend
           exit $LASTEXITCODE
 
       - name: Gate de ML (F1 intención ≥ 0,80 · AUC churn ≥ 0,65 sobre el corpus real)
         run: |
           # Pruebas de ml/ con los CSV reales (no versionados): reproduce los hallazgos y el gate del SAD.
-          # Código de solo lectura y entorno virtual dentro del contenedor: nunca toca un .venv del host.
+          # Codigo de solo lectura y entorno virtual dentro del contenedor: nunca toca un .venv del host.
           docker run --rm -v "${PWD}\ml:/ml:ro" -v "$env:COPILOTO_DATOS\raw\03_datos:/data/raw/03_datos:ro" `
             -v uv-cache-ci:/root/.cache/uv -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_LINK_MODE=copy -w /ml `
             ghcr.io/astral-sh/uv:0.13.9-python3.12-trixie-slim `
@@ -114,7 +113,10 @@ jobs:
           py -3.13 eval/correr_golden.py
           $codigo = $LASTEXITCODE
           $reporte = Get-ChildItem eval\reportes\golden_*.md | Sort-Object LastWriteTime | Select-Object -Last 1
-          if ($reporte) { Get-Content $reporte.FullName -Encoding utf8 | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY }
+          if ($reporte) {
+            $texto = [IO.File]::ReadAllText($reporte.FullName, [Text.Encoding]::UTF8)
+            [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "`n$texto`n")
+          }
           exit $codigo
 
       - name: Rollback a la versión anterior
@@ -126,26 +128,29 @@ jobs:
           docker compose up -d --no-build --wait --wait-timeout 300
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           py -3.13 scripts/smoke_api.py
-          "## ⚠️ Rollback a ``$env:IMAGE_TAG`` (falló un gate de ``$env:SHA``)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $sha = $env:SHA.Substring(0, 7)
+          [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "## &#9888;&#65039; Rollback a ``$env:IMAGE_TAG`` (fall&oacute; un gate de ``$sha``)`n")
           exit 1
 
       - name: Lead time (commit → desplegado y validado)
         if: success()
         run: |
           $commit = [datetime]::Parse((git show -s --format=%cI $env:SHA)).ToUniversalTime()
-          $minutos = [math]::Round(((Get-Date).ToUniversalTime() - $commit).TotalMinutes, 1)
-          $despliegue = [math]::Round(((Get-Date).ToUniversalTime() - [datetime]::Parse($env:T_INICIO).ToUniversalTime()).TotalMinutes, 1)
-          $meta = if ($minutos -lt 30) { "✅" } else { "❌" }
-          @(
-            "## Despliegue ``$($env:SHA.Substring(0,7))``",
+          $ahora = (Get-Date).ToUniversalTime()
+          $minutos = [math]::Round(($ahora - $commit).TotalMinutes, 1)
+          $despliegue = [math]::Round(($ahora - [datetime]::Parse($env:T_INICIO).ToUniversalTime()).TotalMinutes, 1)
+          $meta = if ($minutos -lt 30) { "&#9989;" } else { "&#10060;" }
+          $sha = $env:SHA.Substring(0, 7)
+          $filas = @(
+            "## Despliegue ``$sha``", "",
             "| Indicador | Valor | Meta |", "|---|---|---|",
-            "| Lead time (commit → validado) | $minutos min | < 30 min $meta |",
-            "| Despliegue + gates | $despliegue min | |"
-          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+            "| Lead time (commit &rarr; desplegado y validado) | $minutos min | &lt; 30 min $meta |",
+            "| Despliegue + gates | $despliegue min | |", ""
+          )
+          [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, ($filas -join "`n"))
 
       - name: Limpieza
         if: always()
         run: |
           Remove-Item .env -Force -ErrorAction SilentlyContinue
-          docker logout ghcr.io | Out-Null
           exit 0
