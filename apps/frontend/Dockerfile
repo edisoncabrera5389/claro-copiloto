@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Etapa 1: build de Angular (npm 11: el 10.9 falla al resolver los peers de Vitest).
-FROM node:24-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
