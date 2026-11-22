@@ -59,6 +59,11 @@ class Settings(BaseSettings):
         default=300, validation_alias=_alias("API_CONFIRMACION_TTL_S", "MCP_CONFIRMACION_TTL_S")
     )
 
+    # --- Servicio de modelos de ML (intención SVM y riesgo de churn) ---
+    ml_url: str = "http://ml-service:8001"
+    ml_timeout_s: float = 1.0  # si no responde a tiempo, la API sigue con su respaldo (reglas)
+    umbral_intencion: float = Field(default=0.7, ge=0, le=1)  # SAD 2.7: bajo esto, respaldo
+
     # --- Memoria y auditoría ---
     redis_url: str = "redis://redis:6379/1"
     mongo_url: str = "mongodb://mongo:27017"

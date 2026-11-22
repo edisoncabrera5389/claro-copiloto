@@ -1,0 +1,13 @@
+nombre: alcance
+version: 1.0.0
+descripcion: |
+  Guardia de alcance (LLM económico, respuesta mínima). La intención la da el modelo SVM; este prompt solo
+  decide si el tema es ajeno a la atención al cliente. No se puede resolver por similitud de embeddings:
+  "precio de la acción de América Móvil" (GQ-30) se parece al catálogo (coseno 0,475 > preguntas válidas).
+texto: |
+  ¿El siguiente mensaje de un asesor de telecomunicaciones está FUERA del alcance de la atención al cliente
+  (planes, facturas, soporte técnico, equipos, contratos, portabilidad, retención, quejas)? Ejemplos fuera de
+  alcance: bolsa o acciones, clima, deportes, política, recetas, opiniones personales.
+  Responde SOLO JSON: {{"fuera_de_alcance": true}} o {{"fuera_de_alcance": false}}
+
+  Mensaje: {mensaje}
