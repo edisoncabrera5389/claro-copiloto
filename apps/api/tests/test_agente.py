@@ -114,6 +114,35 @@ async def test_pii_nunca_llega_al_llm_pero_si_a_la_tool():
     assert final["tools"][-1]["argumentos"] == ["numero_documento", "tipo_documento"]  # nombres, no valores
 
 
+async def test_no_encontrado_del_sistema_es_respuesta_concluyente():
+    """'No existe un cliente con ese documento' viene del CRM: no se reemplaza por 'no encontré, escala'."""
+    error = "CLIENTE_NO_ENCONTRADO: No existe un cliente con ese documento (sistema=crm)"
+    mcp = FakeMCP({"buscarCliente": lambda a: (False, None, error)})
+    pasos = [
+        llamada("buscarCliente", tipo_documento="CC", numero_documento="<DOCUMENTO_1>"),
+        Respuesta("No existe un cliente con ese documento (CRM).", []),
+    ]
+    irrelevante = FakeRetriever([fragmento(1, "irrelevante", relevancia=0.05)])
+    final, _ = await correr(
+        dependencias(FakeLLM(pasos), irrelevante, mcp=mcp), "Busca al cliente con CC 1023456789"
+    )
+    assert final["ruta"] == "agente" and final["respuesta"].startswith("No existe un cliente")
+    assert final["confianza"] == 0.9
+
+
+async def test_error_tecnico_de_la_tool_si_baja_la_confianza():
+    mcp = FakeMCP({"buscarCliente": lambda a: (False, None, "SERVICIO_NO_DISPONIBLE: crm respondió 503")})
+    pasos = [
+        llamada("buscarCliente", tipo_documento="CC", numero_documento="<DOCUMENTO_1>"),
+        Respuesta("Parece que no existe.", []),
+    ]
+    irrelevante = FakeRetriever([fragmento(1, "irrelevante", relevancia=0.05)])
+    final, _ = await correr(
+        dependencias(FakeLLM(pasos), irrelevante, mcp=mcp), "Busca al cliente con CC 1023456789"
+    )
+    assert final["respuesta"] == RESPUESTA_NO_ENCONTRADO and final["motivo"] == "BAJA_CONFIANZA"
+
+
 async def test_escritura_sobre_cliente_no_identificado_se_rechaza():
     d = dependencias(
         FakeLLM([llamada("crearTicket", cliente_id="C-9999"), Respuesta("Revisa el procedimiento [1].", [])])

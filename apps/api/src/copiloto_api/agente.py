@@ -67,6 +67,12 @@ RESPUESTA_NO_ENCONTRADO = (
     "Según la Política de Escalamiento (numeral 2), escala el caso a un supervisor."
 )
 
+
+def _es_no_encontrado(error: str | None) -> bool:
+    """Código de negocio del MCP del tipo CLIENTE_NO_ENCONTRADO / FACTURA_NO_ENCONTRADA (antes de ':')."""
+    return bool(error) and "NO_ENCONTRAD" in error.split(":", 1)[0]
+
+
 BUSCAR_CONOCIMIENTO = {
     "type": "function",
     "function": {
@@ -613,7 +619,14 @@ def crear_agente(
         fuentes = e.get("fuentes", [])
         confianza = e.get("confianza")
         if confianza is None:  # ruta agente
-            tools_ok = [t for t in e.get("tools", []) if t["ok"] and t["nombre"] != "buscar_conocimiento"]
+            # Un "no encontrado" del sistema (CLIENTE_NO_ENCONTRADO, FACTURA_NO_ENCONTRADA…) es una respuesta
+            # concluyente, no falta de información: sin esto, "no existe un cliente con ese documento (CRM)"
+            # se reemplazaba por "no encontré, escala". Errores técnicos (503, timeout) sí bajan la confianza.
+            tools_ok = [
+                t
+                for t in e.get("tools", [])
+                if t["nombre"] != "buscar_conocimiento" and (t["ok"] or _es_no_encontrado(t.get("error")))
+            ]
             rel_citadas = [f["relevancia"] for f in fuentes if f["n"] in citadas]
             rel_todas = [f["relevancia"] for f in fuentes]
             conf_fuentes = max(rel_citadas) if rel_citadas else (max(rel_todas) * 0.6 if rel_todas else 0.0)
