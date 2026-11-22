@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 
 import { ApiCopiloto } from '../core/api';
 import { mensajeError } from '../core/auth';
@@ -75,10 +75,12 @@ export class FichaClienteView {
   });
 
   constructor() {
+    // El efecto depende SOLO del cliente y de la versión. cargar() lee y escribe `ficha`: sin untracked, esa
+    // lectura volvía a disparar el efecto en cada respuesta (bucle de solicitudes → 429 "Demasiadas solicitudes").
     effect(() => {
       const id = this.clienteId();
       this.version();
-      void this.cargar(id);
+      untracked(() => void this.cargar(id));
     });
   }
 

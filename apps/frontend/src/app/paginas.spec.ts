@@ -143,10 +143,35 @@ describe('FichaClienteView', () => {
     f.detectChanges();
     const el = f.nativeElement as HTMLElement;
     expect(doble.ficha).toHaveBeenCalledWith('C-1004');
+    await esperar();
+    f.detectChanges();
+    expect(doble.ficha).toHaveBeenCalledTimes(1); // regresión: la respuesta no debe volver a pedir la ficha
     expect(el.textContent).toContain('Cliente Demo');
     expect(el.querySelectorAll('.critico').length).toBe(2); // mora 45 días y saldo vencido
     expect(el.textContent).toContain('1 tickets en 90 días');
     expect(el.textContent).toContain('Riesgo de abandono: alto');
+  });
+
+  it('vuelve a consultar solo si cambia el cliente o la versión (acción confirmada)', async () => {
+    const { doble } = configurar();
+    const f = TestBed.createComponent(FichaClienteView);
+    f.componentRef.setInput('clienteId', 'C-1004');
+    f.detectChanges();
+    await esperar();
+    f.detectChanges();
+    await esperar();
+    f.detectChanges();
+    expect(doble.ficha).toHaveBeenCalledTimes(1);
+    f.componentRef.setInput('version', 1); // se ejecutó una acción: la ficha cambió en el CRM
+    f.detectChanges();
+    await esperar();
+    f.detectChanges();
+    expect(doble.ficha).toHaveBeenCalledTimes(2);
+    f.componentRef.setInput('clienteId', 'C-1001');
+    f.detectChanges();
+    await esperar();
+    expect(doble.ficha).toHaveBeenLastCalledWith('C-1001');
+    expect(doble.ficha).toHaveBeenCalledTimes(3);
   });
 
   it('informa si el CRM no responde', async () => {
