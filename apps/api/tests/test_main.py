@@ -96,8 +96,10 @@ def test_confirmar_firma_el_token_y_el_mcp_lo_verifica():
         r = c.post(f"/acciones/{pid}/confirmar", headers=token(c))
         assert r.status_code == 200 and r.json()["resultado"] == {
             "estado": "ejecutada",
+            "accion": "crearTicket",
             "confirmada_por": "A-001",
             "rol": "asesor",
+            "resultado": {"ticket_id": "TK-900001"},
         }
         assert "token_confirmacion" in d.mcp.llamadas[-1][1]
         assert c.post(f"/acciones/{pid}/confirmar", headers=token(c)).status_code == 404  # una sola vez

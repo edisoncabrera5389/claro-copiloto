@@ -14,8 +14,16 @@ from typing import Any, Protocol
 
 log = logging.getLogger("copiloto_ml_service")
 MODELOS = ("intencion", "churn")
-METRICAS_PRINCIPALES = {"f1_macro_groupkfold", "f1_macro_std", "f1_macro_split_aleatorio_con_fuga",
-                        "auc", "auc_std", "pr_auc", "brier", "tasa_base"}
+METRICAS_PRINCIPALES = {
+    "f1_macro_groupkfold",
+    "f1_macro_std",
+    "f1_macro_split_aleatorio_con_fuga",
+    "auc",
+    "auc_std",
+    "pr_auc",
+    "brier",
+    "tasa_base",
+}
 ARTEFACTOS = {
     "intencion": ["referencia_drift.json"],
     "churn": ["referencia_drift.json", "umbrales_nivel.json", "coeficientes.json"],

@@ -4,6 +4,8 @@ import copy
 from contextlib import asynccontextmanager
 from typing import Any
 
+from copiloto_api.observabilidad import marcar_error, span
+
 
 def a_formato_llm(herramienta: dict[str, Any]) -> dict[str, Any]:
     """El LLM nunca ve `token_confirmacion`: solo la API lo agrega cuando el asesor confirma."""
@@ -48,8 +50,17 @@ class ClienteMCP:
         return self._herramientas
 
     async def llamar(self, nombre: str, argumentos: dict[str, Any]) -> tuple[bool, Any, str | None]:
-        async with self._cliente() as c:
-            r = await c.call_tool(nombre, argumentos, raise_on_error=False)
-        if r.is_error:
-            return False, None, " ".join(getattr(b, "text", "") for b in r.content)[:500]
-        return True, r.data if r.data is not None else r.structured_content, None
+        # En la traza: nombre de la tool y NOMBRES de los argumentos (los valores pueden ser PII restituida).
+        argumentos_traza = sorted(k for k in argumentos if k != "token_confirmacion")
+        with span(
+            f"tool.{nombre}", "TOOL", **{"tool.name": nombre, "copiloto.argumentos": argumentos_traza}
+        ) as s:
+            async with self._cliente() as c:
+                r = await c.call_tool(nombre, argumentos, raise_on_error=False)
+            if r.is_error:
+                error = " ".join(getattr(b, "text", "") for b in r.content)[:500]
+                s.set_attribute("copiloto.error", error.split(":")[0][:80])  # solo el código
+                marcar_error(s, error.split(":")[0])
+                return False, None, error
+            s.set_attribute("copiloto.confirmada", "token_confirmacion" in argumentos)
+            return True, r.data if r.data is not None else r.structured_content, None

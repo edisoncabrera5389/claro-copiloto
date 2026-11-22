@@ -1,7 +1,7 @@
 """API del servicio de modelos.
 
 POST /intencion · POST /churn · POST /churn/ficha · GET /drift · GET /drift/muestras ·
-POST /modelos/recargar · GET /health
+POST /modelos/recargar · GET /metrics · GET /health
 """
 
 import asyncio
@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from pydantic import BaseModel, Field
 
 from copiloto_ml_service import caracteristicas, drift
@@ -53,6 +54,24 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
         yield
 
     app = FastAPI(title="Claro Copiloto · ML service", version="0.1.0", lifespan=ciclo)
+    reg = CollectorRegistry()
+    m_inferencias = Counter("ml_inferencias", "Inferencias servidas", ["modelo", "resultado"], registry=reg)
+    m_latencia = Histogram(
+        "ml_latencia_segundos",
+        "Latencia de inferencia",
+        ["modelo"],
+        registry=reg,
+        buckets=(0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
+    )
+    m_confianza = Histogram(
+        "ml_confianza_intencion",
+        "Confianza del SVM (bajo 0,7 la API pasa al LLM)",
+        registry=reg,
+        buckets=(0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0),
+    )
+    m_psi = Gauge("ml_drift_psi", "PSI por variable (> 0,2 = drift)", ["modelo", "variable"], registry=reg)
+    m_muestras = Gauge("ml_drift_inferencias", "Inferencias en la ventana de drift", ["modelo"], registry=reg)
+    m_cargado = Gauge("ml_modelo_cargado", "1 si el modelo está servido", ["modelo", "version"], registry=reg)
 
     def modelo(request: Request, nombre: str) -> ModeloCargado:
         m = request.app.state.modelos.get(nombre)
@@ -91,6 +110,9 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
             "version": m.version,
             "ms": round((time.perf_counter() - inicio) * 1000, 2),
         }
+        m_inferencias.labels("intencion", resultado["intencion"]).inc()
+        m_latencia.labels("intencion").observe(time.perf_counter() - inicio)
+        m_confianza.observe(resultado["confianza"])
         await registrar(
             request,
             "intencion",
@@ -102,6 +124,7 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
 
     async def puntuar(request: Request, valores: dict[str, Any], origen: str) -> dict[str, Any]:
         m = modelo(request, "churn")
+        inicio = time.perf_counter()
         fila = pd.DataFrame([{c: valores.get(c) for c in caracteristicas.COLUMNAS}])
         fila[caracteristicas.NUMERICAS] = fila[caracteristicas.NUMERICAS].astype("float64")
         prob = float(m.modelo.predict_proba(fila)[0, 1])
@@ -119,6 +142,8 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
             "origen": origen,
             "uso": "Señal de priorización (AUC bajo la meta de 0,75): no decide elegibilidad.",
         }
+        m_inferencias.labels("churn", nivel).inc()
+        m_latencia.labels("churn").observe(time.perf_counter() - inicio)
         await registrar(
             request,
             "churn",
@@ -142,25 +167,33 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
         cursor = request.app.state.db["ml_inferencias"].find({"modelo": nombre}, {"_id": 0}).sort("fecha", -1)
         return list(cursor.limit(limite))
 
-    @app.get("/drift")
-    async def calcular_drift(request: Request, modelo_nombre: NombreModelo = "churn") -> dict:
-        """PSI por variable: inferencias recientes vs distribución de entrenamiento (> 0,2 → alerta)."""
-        m = modelo(request, modelo_nombre)
-        docs = await asyncio.to_thread(inferencias, request, modelo_nombre, s.ventana_drift)
-        referencia = m.artefactos.get("referencia_drift", {})
+    async def psi_por_variable(request: Request, m: ModeloCargado) -> tuple[dict[str, float | None], int]:
+        docs = await asyncio.to_thread(inferencias, request, m.nombre, s.ventana_drift)
         filas = [d["entrada"] | d["salida"] for d in docs]
-        variables = {}
-        for nombre, ref in referencia.items():
+        variables: dict[str, float | None] = {}
+        for nombre, ref in m.artefactos.get("referencia_drift", {}).items():
             valores = [f.get(nombre) for f in filas]
+            if not any(v is not None for v in valores):
+                # Variable que el CRM no entrega (NPS, uso, caídas, método de pago): sin datos, no es drift.
+                # Antes se contaba como categoría "desconocido" y daba PSI 17 en metodo_pago (falsa alarma).
+                variables[nombre] = None
+                continue
             if ref["tipo"] == "categorica":
                 valores = ["desconocido" if v is None else v for v in valores]
             valor = drift.psi(ref, valores)
             variables[nombre] = None if valor is None else round(valor, 4)
+        return variables, len(filas)
+
+    @app.get("/drift")
+    async def calcular_drift(request: Request, modelo_nombre: NombreModelo = "churn") -> dict:
+        """PSI por variable: inferencias recientes vs distribución de entrenamiento (> 0,2 → alerta)."""
+        m = modelo(request, modelo_nombre)
+        variables, n = await psi_por_variable(request, m)
         alertas = [k for k, v in variables.items() if v is not None and v > drift.UMBRAL_ALERTA]
         return {
             "modelo": modelo_nombre,
             "version": m.version,
-            "inferencias": len(filas),
+            "inferencias": n,
             "psi": variables,
             "umbral_alerta": drift.UMBRAL_ALERTA,
             "variables_con_drift": alertas,
@@ -190,6 +223,27 @@ def crear_app(settings: Settings | None = None, cargador: Cargador | None = None
             "modelos": {n: m.info() for n, m in request.app.state.modelos.items()},
             "errores": request.app.state.errores,
         }
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request) -> Response:
+        """Prometheus: inferencias, latencia, confianza y PSI (se recalcula en cada lectura, cada 30 s)."""
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        m_cargado.clear()
+        for nombre, m in request.app.state.modelos.items():
+            m_cargado.labels(nombre, m.version).set(1)
+            try:
+                variables, n = await psi_por_variable(request, m)
+            except Exception as e:  # noqa: BLE001 - sin Mongo, las demás métricas siguen
+                log.warning("No se pudo calcular el drift de %s: %s", nombre, type(e).__name__)
+                continue
+            m_muestras.labels(nombre).set(n)
+            for variable, valor in variables.items():
+                if valor is not None:
+                    m_psi.labels(nombre, variable).set(valor)
+        for nombre in request.app.state.errores:
+            m_cargado.labels(nombre, "ninguna").set(0)
+        return Response(generate_latest(reg), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/health/vivo")
     async def vivo() -> dict[str, str]:

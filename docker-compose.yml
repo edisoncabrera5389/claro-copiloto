@@ -130,9 +130,17 @@ services:
     command: ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000",
               "--backend-store-uri", "sqlite:////mlflow/mlflow.db",
               "--artifacts-destination", "/mlflow/artifacts", "--serve-artifacts",
+              "--workers", "1",
               "--allowed-hosts", "mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"]
+    environment:
+      # Medido: 2,25 GB de RAM. El servidor de MLflow 3 arranca 8 consumidores de trabajos GenAI (huey, ~210 MB
+      # c/u) que este proyecto no usa: se desactivan, y un solo worker web basta para el registry local.
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
     volumes: [mlflow-datos:/mlflow]
     ports: ["127.0.0.1:5000:5000"]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
       interval: 15s
@@ -156,6 +164,103 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 768M }
+
+  # ------------------------------------------------------------ observabilidad y RPA ------
+  phoenix:
+    # Trazas del agente (OpenTelemetry/OpenInference): http://localhost:6006
+    <<: *infra
+    image: arizephoenix/phoenix:version-22.0.1
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_TELEMETRY_ENABLED: "false"
+      # Phoenix 22 exige autenticación si escucha fuera de loopback. Local: puerto solo en 127.0.0.1, sin auth.
+      # Producción: PHOENIX_ENABLE_AUTH=true + PHOENIX_SECRET y API key en la cabecera del exportador OTLP.
+      PHOENIX_ENABLE_AUTH: "false"
+    volumes: [phoenix-datos:/mnt/data]
+    ports: ["127.0.0.1:6006:6006"]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  prometheus:
+    # Métricas y reglas de alerta: http://localhost:9090
+    <<: *infra
+    image: prom/prometheus:v3.16.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=15d", "--web.enable-lifecycle"]
+    volumes:
+      - ./infra/observability/prometheus:/etc/prometheus:ro
+      - prometheus-datos:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }
+
+  alertmanager:
+    # Enruta las alertas a n8n: http://localhost:9093
+    <<: *infra
+    image: prom/alertmanager:v0.35.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./infra/observability/alertmanager:/etc/alertmanager:ro
+      - alertmanager-datos:/alertmanager
+    ports: ["127.0.0.1:9093:9093"]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  grafana:
+    # Tableros provisionados como código: http://localhost:3000 (lectura anónima; admin con GRAFANA_ADMIN_PASSWORD)
+    <<: *infra
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD en .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/copiloto-agente.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-datos:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [prometheus]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+
+  n8n:
+    # RPA: acción confirmada → ERP, escalamiento → notificación, alertas → acción. UI: http://localhost:5678
+    # Los flujos se importan (y activan) desde infra/n8n/flujos en cada arranque: versionados en Git.
+    <<: *infra
+    image: n8nio/n8n:2.49.3
+    entrypoint: ["/bin/sh", "-c"]
+    # En modo estándar la activación es con publish:workflow (import --activeState solo aplica en modo cola).
+    command: ["n8n import:workflow --separate --input=/flujos
+               && for id in CopilotoAccionERP CopilotoEscalamien CopilotoAlertasAcc; do n8n publish:workflow --id=$$id; done
+               && exec n8n start"]
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Defina N8N_ENCRYPTION_KEY en .env}
+      MOCKS_API_KEY: ${MOCKS_API_KEY:?Defina MOCKS_API_KEY en .env}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"   # los flujos leen MOCKS_API_KEY del entorno (no en el JSON)
+      N8N_METRICS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"              # solo localhost por HTTP
+      GENERIC_TIMEZONE: America/Bogota
+      TZ: America/Bogota
+      NODE_OPTIONS: --max-old-space-size=768  # con 512 MB el primer arranque (migraciones) agotaba el heap
+    volumes:
+      - ./infra/n8n/flujos:/flujos:ro
+      - n8n-datos:/home/node/.n8n
+    ports: ["127.0.0.1:5678:5678"]
+    depends_on:
+      erp-mock: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
 
   ingesta-watcher:
     <<: *ingesta
@@ -197,6 +302,8 @@ services:
       API_QDRANT_URL: http://qdrant:6333
       API_MCP_URL: http://mcp-server:8090/mcp
       API_ML_URL: http://ml-service:8001
+      API_OTEL_ENDPOINT: http://phoenix:6006       # trazas OpenTelemetry → Phoenix
+      API_N8N_URL: http://n8n:5678/webhook          # eventos de negocio → flujos RPA
       API_REDIS_URL: redis://redis:6379/1
       API_MONGO_URL: mongodb://mongo:27017
       API_RERANKER_ACTIVO: ${API_RERANKER_ACTIVO:-false}
@@ -280,3 +387,8 @@ volumes:
   modelos:
   ollama-modelos:
   mlflow-datos:
+  phoenix-datos:
+  prometheus-datos:
+  alertmanager-datos:
+  grafana-datos:
+  n8n-datos:

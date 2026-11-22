@@ -28,6 +28,7 @@ Si MLflow no responde o falta un modelo, el servicio arranca igual, lo informa e
 | `GET /drift?modelo=churn\|intencion` | PSI por variable sobre las últimas 500 inferencias; alerta si > 0,2 |
 | `GET /drift/muestras?modelo=` | Inferencias guardadas (para el informe Evidently de `ml/`) |
 | `POST /modelos/recargar` | Toma en caliente la versión recién promovida en MLflow |
+| `GET /metrics` | Prometheus: inferencias por modelo y resultado, latencia, confianza del SVM (fracción que va al LLM) y **PSI por variable** recalculado en cada lectura |
 | `GET /health` · `GET /health/vivo` | Versiones y métricas principales de cada modelo · liveness |
 
 **PII:** nunca se registra ni se guarda el texto de la nota; en logs y en Mongo solo van su largo y la clase
@@ -55,10 +56,15 @@ Local, sin Docker: `uv sync` y `uv run python -m copiloto_ml_service` (puerto 80
 Imagen: multi-stage, usuario no root (uid 10001), sistema de archivos de solo lectura, healthcheck en
 `/health/vivo`. Medido: intención en ~7 ms dentro del contenedor.
 
+## Drift en producción
+
+- Las variables que el CRM no entrega (NPS, uso de datos, caídas, método de pago) llegan vacías: se informan como **sin datos**, no como drift. Antes `metodo_pago` daba PSI 17 (todo "desconocido"), una falsa alarma vista en el tablero.
+- En la demo, el churn sí muestra drift real: las inferencias salen de 4 clientes consultados una y otra vez, que no se parecen a la población de entrenamiento. La intención también (las preguntas del asesor son más largas que las notas de tickets). La alerta `DriftDeModelo` exige ≥ 30 inferencias en la ventana.
+
 ## Pruebas
 
 ```powershell
-uv run pytest      # 8 pruebas con un cargador falso (sin MLflow) y mongomock · cobertura 92 %
+uv run pytest      # 10 pruebas con un cargador falso (sin MLflow) y mongomock · cobertura 92 %
 uv run ruff check . ; uv run ruff format --check .
 ```
 

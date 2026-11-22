@@ -24,6 +24,7 @@ El modo "cliente final" (opcional en el caso) queda como siguiente paso.
 | **CSP estricta** | `script-src 'self'`, `frame-ancestors 'none'`, `connect-src 'self'` + `nosniff`, `Referrer-Policy`, `Permissions-Policy`. Por eso se desactivó `inlineCritical`: Angular carga el CSS diferido con un `onload` en línea que la CSP bloquea (detectado en las capturas de las pruebas) |
 | **Sesión** | JWT en `sessionStorage` (se borra al cerrar la pestaña), expiración leída del claim `exp`; un 401 cierra la sesión. En producción: SSO corporativo |
 | **Logs de Nginx sin query ni cuerpo** | Pueden traer datos del cliente (Ley 1581) |
+| **`/api/metrics` bloqueado** | Las métricas de Prometheus solo se leen en la red interna; desde el navegador responde 404 |
 
 ## Ejecución
 

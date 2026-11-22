@@ -1,0 +1,59 @@
+{
+ "id": "CopilotoEscalamien",
+ "name": "Copiloto · Escalamiento → notificación",
+ "active": true,
+ "nodes": [
+  {
+   "id": "5a1e1bad-715f-5694-9b8e-b34e94319aa1",
+   "name": "Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "webhookId": "51336eaa-375f-5672-bf82-e73bdb3e2176",
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "escalamiento",
+    "responseMode": "onReceived",
+    "options": {}
+   }
+  },
+  {
+   "id": "57668a06-772b-577e-867e-d839d9b95b44",
+   "name": "Preparar notificación",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Escalamiento (manual del asesor o obligatorio por política). En producción: Teams/correo al supervisor.\nconst e = $json.body;\nconst obligatorio = e.origen === 'politica';\nreturn [{ json: {\n  escalamiento_id: e.escalamiento_id,\n  canal: obligatorio ? 'Teams #supervision-urgente + correo al supervisor de turno' : 'Teams #supervision',\n  sla_minutos: 10, // Política de Escalamiento: el supervisor responde en máximo 10 minutos\n  mensaje: `${obligatorio ? 'Escalamiento obligatorio' : 'Escalamiento manual'} · cliente ${e.cliente_id ?? 'sin identificar'}`\n         + ` · ${e.motivo} · asesor ${e.asesor}`,\n} }];\n"
+   }
+  }
+ ],
+ "connections": {
+  "Webhook": {
+   "main": [
+    [
+     {
+      "node": "Preparar notificación",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "all"
+ },
+ "meta": {
+  "descripcion": "Local: el mensaje queda en las ejecuciones de n8n. Producción: nodo de Teams/correo en lugar del registro."
+ },
+ "pinData": {},
+ "tags": []
+}

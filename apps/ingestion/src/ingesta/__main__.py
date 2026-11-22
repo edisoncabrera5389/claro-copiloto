@@ -127,7 +127,12 @@ def main() -> int:
         return 0
     if args.cmd == "worker":
         consumidor = os.getenv("HOSTNAME") or socket.gethostname()
-        Worker(s, deps["redis"], deps["pipeline"].procesar, consumidor).correr()
+        from ingesta.metricas import Metricas
+
+        worker = Worker(s, deps["redis"], deps["pipeline"].procesar, consumidor, Metricas())
+        worker.metricas._cola = worker.estado_cola
+        worker.metricas.servir(s.metricas_puerto)  # Prometheus: http://ingesta-worker:9101/metrics
+        worker.correr()
     elif args.cmd == "procesar":
         for archivo in args.archivos:
             r = deps["pipeline"].procesar(archivo, forzar=args.forzar)

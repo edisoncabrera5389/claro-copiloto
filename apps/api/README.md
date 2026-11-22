@@ -59,6 +59,18 @@ El evento `fin` trae: respuesta, ruta, intención, cliente identificado, riesgo 
 - **Turno protegido ante desconexión**: si el asesor cierra la pestaña a mitad de la respuesta, el turno termina igual y queda auditado y en memoria (`asyncio.shield`; antes la cancelación del stream lo cortaba sin auditar, visto en las pruebas E2E).
 - **MongoDB**: `auditoria` (pregunta enmascarada, intención y su origen svm/llm/reglas, ruta, motivo, tools, fuentes con versión, modelo, versiones de prompts, tokens, costo, latencias, confianza), `acciones` (quién propuso, quién confirmó, resultado), `feedback` y `escalamientos`.
 - **Prompts versionados** en [prompts/](src/copiloto_api/prompts/) (semver con historial de cambios); la versión queda en cada turno auditado.
+- **Escalamientos obligatorios por política** (tutela, SIC, fraude…) entran solos a la cola del supervisor (`origen: politica`); los del botón del asesor, como `manual`.
+
+## Observabilidad y RPA ([observabilidad.py](src/copiloto_api/observabilidad.py), [notificador.py](src/copiloto_api/notificador.py))
+
+| Señal | Qué contiene |
+|---|---|
+| **Trazas → Phoenix** (OpenTelemetry/OpenInference, `API_OTEL_ENDPOINT`) | Un span `turno` (AGENT) por turno → `nodo.*` (CHAIN) por nodo del grafo → `buscar_conocimiento` (RETRIEVER, con fuente y versión de cada fragmento) → `tool.*` (TOOL) → llamadas al LLM con mensajes y tokens (instrumentador de OpenAI). El `trace_id` queda en la auditoría y en el log: auditoría ↔ traza |
+| **PII en trazas** | Atributos elegidos a mano: entrada = texto **enmascarado** (el mismo que ve el LLM), tools con **nombres** de argumentos (nunca valores restituidos por la bóveda), errores solo con su código. Una prueba verifica que el documento no aparece en ningún span exportado |
+| **Métricas → Prometheus** (`GET /metrics`, solo red interna) | Turnos por ruta/intención/origen, latencia (primer token y total, cubetas finas alrededor de 2 s y 8 s), costo por modelo, tokens, tools por resultado, bucles cortados, acciones bloqueadas por motivo, escalamientos por origen, respuestas sin cita, feedback y acciones confirmadas |
+| **Eventos → n8n** (`API_N8N_URL`, en segundo plano) | `escalamiento` (manual o por política) y `accion-confirmada` (solo identificadores, códigos y montos; sin texto libre). Si n8n no responde, el flujo del asesor sigue |
+
+La telemetría nativa de FastAPI está desactivada: sus spans HTTP (incluido `GET /metrics` cada 15 s) tapaban las trazas del agente en Phoenix.
 
 ## Ejecución
 
@@ -68,13 +80,13 @@ py -3.13 scripts/smoke_api.py         # 12 verificaciones de punta a punta
 py -3.13 eval/correr_golden.py        # golden con LLM juez (ver eval/README.md)
 ```
 
-Documentación interactiva: http://localhost:8000/docs. Variables: `JWT_SECRET`, `API_DEMO_PASSWORD`, `LITELLM_MASTER_KEY`, `MCP_CONFIRMACION_SECRET`, `API_RERANKER_ACTIVO`, `API_RATE_LIMIT_POR_MIN`, `API_UMBRAL_CONFIANZA`, `API_ML_URL`, `API_UMBRAL_INTENCION` (ver [config.py](src/copiloto_api/config.py)). Imagen multi-stage (765 MB), usuario `10001`, raíz de solo lectura, puerto solo en `127.0.0.1`.
+Documentación interactiva: http://localhost:8000/docs. Variables: `JWT_SECRET`, `API_DEMO_PASSWORD`, `LITELLM_MASTER_KEY`, `MCP_CONFIRMACION_SECRET`, `API_RERANKER_ACTIVO`, `API_RATE_LIMIT_POR_MIN`, `API_UMBRAL_CONFIANZA`, `API_ML_URL`, `API_UMBRAL_INTENCION`, `API_OTEL_ENDPOINT`, `API_N8N_URL` (ver [config.py](src/copiloto_api/config.py)). Imagen multi-stage (765 MB), usuario `10001`, raíz de solo lectura, puerto solo en `127.0.0.1`.
 
 ## Pruebas
 
 ```powershell
 cd apps/api
-uv run pytest            # 63 pruebas, cobertura 93 %
+uv run pytest            # 68 pruebas, cobertura 93 %
 uv run ruff check . ; uv run ruff format --check .
 ```
 

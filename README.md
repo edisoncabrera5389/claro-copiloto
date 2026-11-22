@@ -18,7 +18,7 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 8 | [Evaluación golden](eval/): exactitud 100 %, groundedness 0,99, recall 0,98, p95 TTFT 1,5 s | ✅ |
 | 3 | [Front Angular](apps/frontend/) del asesor y del supervisor: chat con streaming, citas con versión, ficha del cliente, confirmación de acciones, 👍/👎, escalamiento · Vitest 94 % + Playwright E2E | ✅ |
 | 9 | [Modelos de ML](ml/): intención SVM (F1 0,92 GroupKFold, cascada con LLM), churn (AUC 0,71, señal), MLflow con promoción, drift PSI + Evidently · [ml-service](apps/ml-service/) | ✅ |
-| 11 | Trazas (OpenTelemetry/Phoenix) y tableros | ⏳ |
+| 11 | [Observabilidad y RPA](infra/): trazas OpenTelemetry → Phoenix (sin PII, `trace_id` en la auditoría), métricas Prometheus, 12 alertas probadas con promtool, 2 tableros Grafana como código, n8n (acción confirmada → ERP, escalamiento, alertas → acción) | ✅ |
 | 10, 12–14 | Docker, pruebas, Terraform, CI/CD | ⏳ |
 
 ## Inicio rápido
@@ -54,6 +54,10 @@ curl -X POST http://localhost:8001/modelos/recargar
 | Servidor MCP | http://localhost:8090/mcp · estado: http://localhost:8090/health |
 | Qdrant (índice) | http://localhost:6333/dashboard |
 | MLflow (experimentos y registry) | http://localhost:5000 |
+| Phoenix (trazas del agente) | http://localhost:6006 → proyecto `claro-copiloto` |
+| Grafana (tableros y alertas) | http://localhost:3000 (lectura anónima; admin con `GRAFANA_ADMIN_PASSWORD`) |
+| Prometheus · Alertmanager | http://localhost:9090 · http://localhost:9093 |
+| n8n (flujos RPA) | http://localhost:5678 |
 | ML service (intención, churn, drift) | http://localhost:8001/docs · estado: http://localhost:8001/health |
 | Ingesta | `docker compose exec ingesta-worker python -m ingesta estado` |
 

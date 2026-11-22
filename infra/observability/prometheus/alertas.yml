@@ -1,0 +1,103 @@
+# Alertas del copiloto (SAD 2.10 y 2.14). Umbrales = metas del caso. Probadas con `promtool test rules`
+# (alertas_test.yml). Alertmanager las envía a n8n (flujo "Alertas → acción").
+groups:
+  - name: copiloto-agente
+    rules:
+      - alert: LatenciaPrimerTokenAlta
+        expr: histogram_quantile(0.95, sum by (le) (rate(copiloto_ttft_segundos_bucket[10m]))) > 2
+        for: 5m
+        labels: { severidad: advertencia, equipo: plataforma }
+        annotations:
+          resumen: "p95 del primer token {{ $value | humanize }} s (meta ≤ 2 s)"
+          accion: "Revisar latencia del LLM en Phoenix; considerar modelo económico o caché semántico."
+
+      - alert: ErroresDeToolsAltos
+        expr: |
+          sum(rate(copiloto_tool_llamadas_total{resultado="error"}[10m]))
+            / clamp_min(sum(rate(copiloto_tool_llamadas_total[10m])), 1e-9) > 0.10
+        for: 5m
+        labels: { severidad: critica, equipo: integraciones }
+        annotations:
+          resumen: "{{ $value | humanizePercentage }} de las llamadas a tools fallan (umbral 10 %)"
+          accion: "Revisar CRM/Facturación y el circuit breaker del MCP."
+
+      - alert: BuclesDelAgente
+        expr: increase(copiloto_bucles_cortados_total[15m]) > 3
+        labels: { severidad: advertencia, equipo: ia }
+        annotations:
+          resumen: "{{ $value | humanize }} bucles de tools cortados en 15 min"
+          accion: "Revisar en Phoenix las trazas con 'bucle cortado' y el prompt del agente."
+
+      - alert: AccionesBloqueadasPorPolitica
+        expr: sum(increase(copiloto_acciones_bloqueadas_total[15m])) > 5
+        labels: { severidad: advertencia, equipo: seguridad }
+        annotations:
+          resumen: "{{ $value | humanize }} acciones bloqueadas en 15 min (inyección o cliente no identificado)"
+          accion: "Posible abuso o prompt injection: revisar auditoría por usuario."
+
+      - alert: RespuestasSinCita
+        expr: |
+          increase(copiloto_respuestas_sin_cita_total[1h])
+            / clamp_min(sum(increase(copiloto_turnos_total{ruta="agente"}[1h])), 1) > 0.05
+          and sum(increase(copiloto_turnos_total{ruta="agente"}[1h])) >= 10
+        labels: { severidad: advertencia, equipo: ia }
+        annotations:
+          resumen: "{{ $value | humanizePercentage }} de respuestas sin cita (meta ≤ 5 %)"
+          accion: "Revisar recall del índice y cambios recientes de prompt (prompt_versions en la auditoría)."
+
+      - alert: FeedbackNegativoAlto
+        expr: |
+          increase(copiloto_feedback_total{valor="negativo"}[1h])
+            / clamp_min(sum(increase(copiloto_feedback_total[1h])), 1) > 0.30
+          and sum(increase(copiloto_feedback_total[1h])) >= 5
+        labels: { severidad: advertencia, equipo: ia }
+        annotations:
+          resumen: "{{ $value | humanizePercentage }} de calificaciones negativas en 1 h"
+          accion: "Llevar los 👎 a la cola de revisión y al golden dataset."
+
+      - alert: CostoLLMPorHora
+        expr: sum(increase(copiloto_costo_usd_total[1h])) > 2
+        labels: { severidad: advertencia, equipo: finops }
+        annotations:
+          resumen: "US$ {{ $value | humanize }} en la última hora (presupuesto local US$ 2/h)"
+          accion: "Revisar ruteo de modelos y presupuesto por usuario en LiteLLM."
+
+      - alert: TurnosConError
+        expr: increase(copiloto_errores_turno_total[10m]) > 0
+        labels: { severidad: critica, equipo: plataforma }
+        annotations:
+          resumen: "{{ $value | humanize }} turnos terminaron en error en 10 min"
+          accion: "Ver la traza con estado ERROR en Phoenix y el log de la API (trace_id)."
+
+  - name: copiloto-ml-ingesta
+    rules:
+      - alert: DriftDeModelo
+        expr: max by (modelo) (ml_drift_psi) > 0.2 and on (modelo) ml_drift_inferencias >= 30
+        for: 10m
+        labels: { severidad: advertencia, equipo: datos }
+        annotations:
+          resumen: "PSI {{ $value | humanize }} en el modelo {{ $labels.modelo }} (umbral 0,2)"
+          accion: "Generar el informe Evidently y evaluar reentrenamiento (n8n abre la solicitud)."
+
+      - alert: FrescuraDeIngesta
+        expr: ingesta_frescura_ultima_segundos > 900
+        labels: { severidad: critica, equipo: datos }
+        annotations:
+          resumen: "El último documento tardó {{ $value | humanizeDuration }} en ser buscable (meta ≤ 15 min)"
+          accion: "Revisar el worker de ingesta y la cola de eventos."
+
+      - alert: EventosEnDeadLetter
+        expr: ingesta_cola_fallidos > 0
+        for: 5m
+        labels: { severidad: advertencia, equipo: datos }
+        annotations:
+          resumen: "{{ $value | humanize }} documentos en la dead-letter de ingesta"
+          accion: "Corregir la causa y ejecutar `python -m ingesta reintentar`."
+
+      - alert: ServicioCaido
+        expr: up{job=~"api|ml-service|ingesta"} == 0
+        for: 2m
+        labels: { severidad: critica, equipo: plataforma }
+        annotations:
+          resumen: "{{ $labels.job }} no responde a Prometheus"
+          accion: "docker compose ps / logs del servicio."

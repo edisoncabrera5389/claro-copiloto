@@ -1,0 +1,100 @@
+{
+ "id": "CopilotoAccionERP",
+ "name": "Copiloto · Acción confirmada → ERP",
+ "active": true,
+ "nodes": [
+  {
+   "id": "87fa62c8-2693-58d0-8dc1-5395eb66ba65",
+   "name": "Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "webhookId": "4c88f048-6db1-5b28-8fa7-2ecb170e392f",
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "accion-confirmada",
+    "responseMode": "onReceived",
+    "options": {}
+   }
+  },
+  {
+   "id": "af1d1c99-e7ab-5ccb-af3b-f55c457f42c2",
+   "name": "Decidir registro en ERP",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Evento de la API al confirmar una propuesta (solo identificadores, códigos y montos: sin PII).\nconst e = $json.body;\nconst p = e.parametros || {};\nconst r = e.resultado || {};\nconst ERP = 'http://erp-mock:8083/v1';\nconst salida = [];\n// POL-RET-2026: la visita técnica prioritaria (ticket a nivel 2) se programa como orden de servicio en 24 h.\nif (e.accion === 'crearTicket' && p.categoria === 'soporte_tecnico' && p.escalar_a === 'nivel2') {\n  salida.push({ json: { destino: 'Orden de servicio (visita técnica)', url: `${ERP}/ordenes-servicio`,\n    cuerpo: { cliente_id: e.cliente_id, tipo: 'visita_tecnica',\n              prioridad: p.prioridad === 'prioritaria' ? 'prioritaria' : 'estandar', ticket_id: r.ticket_id } } });\n}\n// Ajuste de factura → nota crédito en contabilidad (idempotente por ajuste_id: el ERP rechaza duplicados).\nif (e.accion === 'aplicarAjuste' && r.ajuste_id) {\n  salida.push({ json: { destino: 'Nota crédito', url: `${ERP}/notas-credito`,\n    cuerpo: { factura_id: p.factura_id, cliente_id: e.cliente_id, valor: p.valor, ajuste_id: r.ajuste_id,\n              motivo: `Ajuste ${r.ajuste_id} confirmado en Copiloto por ${e.confirmada_por} (${e.rol})` } } });\n}\nreturn salida; // otras acciones (oferta de retención, tickets comunes) no requieren ERP\n"
+   }
+  },
+  {
+   "id": "8bfc495f-5cc7-5df6-8fa3-397a37687903",
+   "name": "Registrar en ERP",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    440,
+    0
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.url }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-API-Key",
+       "value": "={{ $env.MOCKS_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.cuerpo) }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Webhook": {
+   "main": [
+    [
+     {
+      "node": "Decidir registro en ERP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Decidir registro en ERP": {
+   "main": [
+    [
+     {
+      "node": "Registrar en ERP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "all"
+ },
+ "meta": {
+  "descripcion": "Visita técnica → orden de servicio; ajuste → nota crédito. Reintenta 3 veces (429/503 del ERP)."
+ },
+ "pinData": {},
+ "tags": []
+}

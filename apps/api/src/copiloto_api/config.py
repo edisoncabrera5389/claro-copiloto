@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     ml_timeout_s: float = 1.0  # si no responde a tiempo, la API sigue con su respaldo (reglas)
     umbral_intencion: float = Field(default=0.7, ge=0, le=1)  # SAD 2.7: bajo esto, respaldo
 
+    # --- Observabilidad y RPA ---
+    otel_endpoint: str | None = None  # Phoenix (OTLP/HTTP), p. ej. http://phoenix:6006; vacío = sin trazas
+    otel_proyecto: str = "claro-copiloto"
+    n8n_url: str | None = None  # base de webhooks, p. ej. http://n8n:5678/webhook; vacío = sin RPA
+
     # --- Memoria y auditoría ---
     redis_url: str = "redis://redis:6379/1"
     mongo_url: str = "mongodb://mongo:27017"

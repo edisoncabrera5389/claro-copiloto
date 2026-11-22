@@ -162,7 +162,19 @@ class FakeMCP:
             self.conf.consumir(c)
             if nombre in self.respuestas:
                 return self.respuestas[nombre](argumentos)
-            return True, {"estado": "ejecutada", "confirmada_por": c.asesor_id, "rol": c.rol}, None
+            # Misma forma que el MCP real: la respuesta del sistema va anidada en "resultado".
+            sistema = {"crearTicket": {"ticket_id": "TK-900001"}, "aplicarAjuste": {"ajuste_id": "AJ-0001"}}
+            return (
+                True,
+                {
+                    "estado": "ejecutada",
+                    "accion": nombre,
+                    "confirmada_por": c.asesor_id,
+                    "rol": c.rol,
+                    "resultado": sistema.get(nombre, {}),
+                },
+                None,
+            )
         if nombre in self.respuestas:
             return self.respuestas[nombre](argumentos)
         return True, {"ok": nombre}, None

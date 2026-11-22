@@ -1,0 +1,86 @@
+# Pruebas unitarias de las alertas:
+#   docker run --rm -v ${PWD}/infra/observability/prometheus:/p --entrypoint promtool prom/prometheus:v3.16.0 test rules /p/alertas_test.yml
+rule_files:
+  - alertas.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: errores de tools sobre el 10 % disparan la alerta crítica
+    interval: 1m
+    input_series:
+      - series: 'copiloto_tool_llamadas_total{tool="obtenerCliente",resultado="ok"}'
+        values: "0+8x20"
+      - series: 'copiloto_tool_llamadas_total{tool="obtenerCliente",resultado="error"}'
+        values: "0+2x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ErroresDeToolsAltos
+        exp_alerts:
+          - exp_labels: { severidad: critica, equipo: integraciones }
+            exp_annotations:
+              resumen: "20% de las llamadas a tools fallan (umbral 10 %)"
+              accion: "Revisar CRM/Facturación y el circuit breaker del MCP."
+
+  - name: errores bajo el umbral no alertan
+    interval: 1m
+    input_series:
+      - series: 'copiloto_tool_llamadas_total{tool="obtenerCliente",resultado="ok"}'
+        values: "0+19x20"
+      - series: 'copiloto_tool_llamadas_total{tool="obtenerCliente",resultado="error"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ErroresDeToolsAltos
+        exp_alerts: []
+
+  - name: drift con muestra suficiente alerta; con pocas inferencias no
+    interval: 1m
+    input_series:
+      - series: 'ml_drift_psi{modelo="churn",variable="dias_mora"}'
+        values: "0.35x20"
+      - series: 'ml_drift_inferencias{modelo="churn"}'
+        values: "40x20"
+      - series: 'ml_drift_psi{modelo="intencion",variable="largo_descripcion"}'
+        values: "4.8x20"
+      - series: 'ml_drift_inferencias{modelo="intencion"}'
+        values: "10x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: DriftDeModelo
+        exp_alerts:
+          - exp_labels: { severidad: advertencia, equipo: datos, modelo: churn }
+            exp_annotations:
+              resumen: "PSI 350m en el modelo churn (umbral 0,2)"
+              accion: "Generar el informe Evidently y evaluar reentrenamiento (n8n abre la solicitud)."
+
+  - name: frescura sobre 15 minutos
+    interval: 1m
+    input_series:
+      - series: "ingesta_frescura_ultima_segundos"
+        values: "5 5 1200"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FrescuraDeIngesta
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: FrescuraDeIngesta
+        exp_alerts:
+          - exp_labels: { severidad: critica, equipo: datos }
+            exp_annotations:
+              resumen: "El último documento tardó 20m 0s en ser buscable (meta ≤ 15 min)"
+              accion: "Revisar el worker de ingesta y la cola de eventos."
+
+  - name: turnos con error alertan de inmediato
+    interval: 1m
+    input_series:
+      - series: "copiloto_errores_turno_total"
+        values: "0 0 0 1 1 1"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TurnosConError
+        exp_alerts:
+          - exp_labels: { severidad: critica, equipo: plataforma }
+            exp_annotations:
+              resumen: "1 turnos terminaron en error en 10 min"
+              accion: "Ver la traza con estado ERROR en Phoenix y el log de la API (trace_id)."

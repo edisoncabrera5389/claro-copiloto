@@ -29,6 +29,7 @@ from copiloto_api.guardrails import analizar_entrada, validar_citas
 from copiloto_api.llm import ClienteLLM, Uso
 from copiloto_api.mcp_cliente import ClienteMCP, a_formato_llm
 from copiloto_api.ml_cliente import ClienteML
+from copiloto_api.observabilidad import nodo
 from copiloto_api.pii import Boveda, redactar
 from copiloto_api.rag import Fragmento, Retriever
 
@@ -272,7 +273,13 @@ def crear_agente(
             ok, datos, err = await mcp.llamar("crearTicket", args)
             if ok and isinstance(datos, dict) and datos.get("estado") == "requiere_confirmacion":
                 pid = await guardar_propuesta(
-                    {**datos, "argumentos": args, "sesion_id": e["sesion_id"], "usuario": e["usuario"]["id"]}
+                    {
+                        **datos,
+                        "argumentos": args,
+                        "sesion_id": e["sesion_id"],
+                        "usuario": e["usuario"]["id"],
+                        "cliente_id": e["cliente_id"],
+                    }
                 )
                 propuestas.append(
                     {"propuesta_id": pid, **{k: datos[k] for k in ("accion", "resumen", "requiere_rol")}}
@@ -345,6 +352,7 @@ def crear_agente(
                     "argumentos": argumentos,
                     "sesion_id": e["sesion_id"],
                     "usuario": e["usuario"]["id"],
+                    "cliente_id": e.get("cliente_id"),
                 }
             )
             prop = {"propuesta_id": pid, **{k: datos[k] for k in ("accion", "resumen", "requiere_rol")}}
@@ -649,7 +657,7 @@ def crear_agente(
         ("agente", agente),
         ("salida", salida),
     ]:
-        g.add_node(nombre, fn)
+        g.add_node(nombre, nodo(nombre, fn))  # un span por nodo en Phoenix
     g.add_edge(START, "entrada")
     g.add_conditional_edges(
         "entrada",
