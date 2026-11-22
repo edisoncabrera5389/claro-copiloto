@@ -110,9 +110,11 @@ jobs:
       - name: Gate golden (8 KPIs con el LLM real)
         if: env.GOLDEN == 'true'
         run: |
-          py -3.13 eval/correr_golden.py
+          # El dataset es un insumo (no versionado): esta en COPILOTO_DATOS, no en el checkout del runner.
+          py -3.13 eval/correr_golden.py --golden "$env:COPILOTO_DATOS\raw\05_evaluacion\golden_dataset.jsonl"
           $codigo = $LASTEXITCODE
-          $reporte = Get-ChildItem eval\reportes\golden_*.md | Sort-Object LastWriteTime | Select-Object -Last 1
+          $reporte = Get-ChildItem eval\reportes\golden_*.md -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime | Select-Object -Last 1
           if ($reporte) {
             $texto = [IO.File]::ReadAllText($reporte.FullName, [Text.Encoding]::UTF8)
             [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "`n$texto`n")
