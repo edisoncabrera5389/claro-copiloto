@@ -1,30 +1,56 @@
-# Actualizaciones de dependencias (seguridad de la cadena de suministro). Agrupadas por ecosistema y semanales
-# para no inundar de PRs; cada PR pasa por el CI completo (pruebas, Trivy, gitleaks) antes de fusionarse.
+# Actualizaciones de dependencias (seguridad de la cadena de suministro). Mensuales, agrupadas y con tope de PRs
+# abiertos: el primer barrido abrió 7 PRs en minutos (Angular 22 incluido) y saturó los runners de GitHub.
+# Cada PR pasa por el CI completo (pruebas, Trivy, gitleaks) antes de fusionarse.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
       acciones: { patterns: ["*"] }
 
   - package-ecosystem: uv
     directories: [/apps/api, /apps/mcp-server, /apps/ml-service, /apps/mocks, /apps/ingestion, /ml]
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
       python-menores:
         update-types: [minor, patch]
+    ignore:
+      # pandas 3 rompe Evidently 0.7 (ver ml/README.md)
+      - dependency-name: pandas
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /apps/frontend
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
-      angular: { patterns: ["@angular/*", "@angular-devkit/*", "angular-eslint"] }
       npm-menores:
         update-types: [minor, patch]
+    ignore:
+      # Angular 22 exige Node >= 22.22 (la máquina de demo tiene 22.14): las mayores se suben juntas y a mano.
+      - dependency-name: "@angular/*"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@angular-devkit/*"
+        update-types: [version-update:semver-major]
+      - dependency-name: angular-eslint
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major, version-update:semver-minor]   # atada a la versión de Angular
+      - dependency-name: vitest
+        update-types: [version-update:semver-major]
+      - dependency-name: "@vitest/*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: docker
     directories: [/apps/api, /apps/mcp-server, /apps/ml-service, /apps/mocks, /apps/ingestion, /apps/frontend]
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
       imagenes-base: { patterns: ["*"] }
+    ignore:
+      # Python 3.12 en las imágenes y en el CI: un cambio de versión de Python se decide, no se acepta por bot.
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]

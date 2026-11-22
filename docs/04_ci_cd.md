@@ -65,6 +65,14 @@ con tráfico 10 % → 100 % (bloque `feat/terraform`).
 - **Cobertura sin insumos:** `ml/` caía a 68 % porque la comparación SVM vs LLM y el informe Evidently no tenían pruebas
   (0 %, con o sin insumos) → pruebas con datos sintéticos y LLM simulado: 94 %.
 
+- **Primer despliegue real (rollback probado):** falló la descarga desde GHCR (`docker login` → *denied*) y el job volvió
+  solo a la versión anterior, verificada con el smoke de la API (12/12). Causa: Windows PowerShell 5.1 agrega CRLF al
+  token al pasarlo por tubería a `--password-stdin`. Como los paquetes de un repo público son públicos, la descarga es
+  anónima (sin login). Además, PowerShell 5.1 lee los scripts de los pasos como ANSI y `Out-File -Encoding utf8` escribe
+  BOM: los scripts del CD son solo ASCII y `GITHUB_ENV`/`GITHUB_OUTPUT`/resumen se escriben con `AppendAllText`.
+- **Dependabot:** el primer barrido abrió 7 PRs en minutos (Angular 22, que exige Node ≥ 22.22) y saturó los runners →
+  revisión mensual, máximo 2 PRs por ecosistema e ignorar versiones mayores de Angular, Vitest, pandas y Python.
+
 ## Configurar el self-hosted runner (máquina de demo)
 
 El repo es **público**: GitHub advierte que un PR de un fork podría ejecutar código en un self-hosted runner. Por eso:
