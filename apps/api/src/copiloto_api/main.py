@@ -2,7 +2,8 @@
 
 POST /auth/login · POST /chat (SSE) · POST /chat/sincrono · GET /acciones/pendientes ·
 POST /acciones/{id}/confirmar · POST /acciones/{id}/rechazar · POST /feedback ·
-GET /conversaciones/{sesion} · GET /health · GET /health/vivo
+GET /conversaciones/{sesion} · GET /clientes/{id}/ficha · POST|GET /escalamientos ·
+POST /escalamientos/{id}/atender · GET /health · GET /health/vivo
 """
 
 import asyncio
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -30,6 +31,7 @@ from copiloto_api.llm import ClienteLLM
 from copiloto_api.mcp_cliente import ClienteMCP
 from copiloto_api.memoria import Memoria
 from copiloto_api.ml_cliente import ClienteML
+from copiloto_api.pii import redactar
 from copiloto_api.rag import Retriever
 from copiloto_api.seguridad import Usuario, autenticar, emitir_jwt, usuario_actual
 
@@ -54,6 +56,11 @@ class Login(BaseModel):
 class Mensaje(BaseModel):
     mensaje: str = Field(min_length=1, max_length=2000)
     sesion_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{6,64}$")
+
+
+class Escalamiento(BaseModel):
+    sesion_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{6,64}$")
+    motivo: str | None = Field(default=None, max_length=300)
 
 
 class Feedback(BaseModel):
@@ -128,8 +135,8 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
     def deps_de(request: Request) -> Dependencias:
         return request.app.state.deps
 
-    async def limitar(request: Request, u: Usuario) -> None:
-        if not await deps_de(request).memoria.permitir(u.id):
+    async def limitar(request: Request, u: Usuario, recurso: str = "chat") -> None:
+        if not await deps_de(request).memoria.permitir(u.id, recurso):
             raise HTTPException(
                 429, "Demasiadas solicitudes; espera un minuto", headers={"Retry-After": "60"}
             )
@@ -166,6 +173,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
             "respuesta": final.get("respuesta", ""),
             "confianza": final.get("confianza"),
             "intencion": final.get("intencion"),
+            "cliente_id": final.get("cliente_id"),
             "riesgo_churn": final.get("riesgo_churn"),
             "ruta": final.get("ruta"),
             "motivo": final.get("motivo"),
@@ -250,7 +258,9 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 while (item := await cola.get()) is not None:
                     yield item
             finally:
-                await tarea
+                # Si el asesor cierra la pestaña o sale a mitad del turno, el turno termina igual: se audita y
+                # queda en memoria (sin shield, al cortarse el stream se cancelaba el turno sin auditar).
+                await asyncio.shield(tarea)
 
         return EventSourceResponse(eventos(), ping=15)
 
@@ -340,6 +350,60 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
     @app.get("/conversaciones/{sesion_id}")
     async def conversacion(sesion_id: str, request: Request, u: UsuarioActual) -> list[dict[str, Any]]:
         return await deps_de(request).memoria.conversacion(sesion_id, u.id, u.rol)
+
+    def exigir_supervisor(u: Usuario) -> None:
+        if u.rol not in ("supervisor", "admin"):
+            raise HTTPException(403, "Solo un supervisor puede ver o atender escalamientos")
+
+    @app.get("/clientes/{cliente_id}/ficha")
+    async def ficha(
+        request: Request, u: UsuarioActual, cliente_id: Annotated[str, Path(pattern=r"^C-\d{4}$")]
+    ) -> dict[str, Any]:
+        """Panel de la ficha del cliente en el front: lecturas del MCP en paralelo (PII ya filtrada)."""
+        await limitar(request, u, "ficha")
+        d = deps_de(request)
+        (ok_c, cliente, err_c), (ok_s, saldo, _), (ok_f, facturas, _) = await asyncio.gather(
+            d.mcp.llamar("obtenerCliente", {"cliente_id": cliente_id}),
+            d.mcp.llamar("obtenerSaldo", {"cliente_id": cliente_id}),
+            d.mcp.llamar("listarFacturas", {"cliente_id": cliente_id, "limite": 3}),
+        )
+        if not ok_c:
+            no_existe = "NO_ENCONTRADO" in (err_c or "")
+            raise HTTPException(404 if no_existe else 502, err_c or "No se pudo consultar el CRM")
+        return {
+            "cliente": cliente,
+            "saldo": saldo if ok_s else None,
+            "facturas": facturas if ok_f else None,
+        }
+
+    @app.post("/escalamientos")
+    async def escalar(e: Escalamiento, request: Request, u: UsuarioActual) -> dict[str, str]:
+        """Botón "Escalar" del asesor: el caso entra a la cola del supervisor con el contexto del turno."""
+        d = deps_de(request)
+        ultimo = await d.memoria.ultimo_turno(e.sesion_id, u.id) or {}
+        eid = await d.memoria.registrar_escalamiento(
+            {
+                "sesion_id": e.sesion_id,
+                "turno_id": ultimo.get("turno_id"),
+                "cliente_id": ultimo.get("cliente_id"),
+                "motivo": redactar(e.motivo or "Escalamiento manual del asesor"),  # Ley 1581
+                "usuario": u.id,
+                "fecha": datetime.now(UTC),
+            }
+        )
+        return {"escalamiento_id": eid, "estado": "abierto"}
+
+    @app.get("/escalamientos")
+    async def escalamientos(request: Request, u: UsuarioActual) -> list[dict[str, Any]]:
+        exigir_supervisor(u)
+        return await deps_de(request).memoria.escalamientos()
+
+    @app.post("/escalamientos/{eid}/atender")
+    async def atender(eid: str, request: Request, u: UsuarioActual) -> dict[str, str]:
+        exigir_supervisor(u)
+        if not await deps_de(request).memoria.atender_escalamiento(eid, u.id, datetime.now(UTC)):
+            raise HTTPException(404, "El escalamiento no existe o ya fue atendido")
+        return {"estado": "atendido"}
 
     @app.get("/health/vivo")
     async def vivo() -> dict[str, str]:

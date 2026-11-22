@@ -87,8 +87,9 @@ class Memoria:
         return salida
 
     # ---------------------------------------------------------------- límite --------------
-    async def permitir(self, usuario: str) -> bool:
-        clave = f"api:rl:{usuario}:{int(time.time() // 60)}"
+    async def permitir(self, usuario: str, recurso: str = "chat") -> bool:
+        """Contador por usuario, recurso y minuto: consultar la ficha no consume el cupo del chat."""
+        clave = f"api:rl:{recurso}:{usuario}:{int(time.time() // 60)}"
         n = await self.r.incr(clave)
         if n == 1:
             await self.r.expire(clave, 70)
@@ -106,6 +107,35 @@ class Memoria:
 
     async def registrar_feedback(self, doc: dict[str, Any]) -> None:
         await self._insertar("feedback", doc)
+
+    async def registrar_escalamiento(self, doc: dict[str, Any]) -> str:
+        eid = uuid.uuid4().hex[:12]
+        await self._insertar("escalamientos", {**doc, "escalamiento_id": eid, "estado": "abierto"})
+        return eid
+
+    async def escalamientos(self, estado: str = "abierto") -> list[dict[str, Any]]:
+        def buscar() -> list[dict[str, Any]]:
+            return list(self.db["escalamientos"].find({"estado": estado}, {"_id": 0}).sort("fecha", 1))
+
+        return await asyncio.to_thread(buscar)
+
+    async def atender_escalamiento(self, eid: str, supervisor: str, fecha: Any) -> bool:
+        r = await asyncio.to_thread(
+            self.db["escalamientos"].update_one,
+            {"escalamiento_id": eid, "estado": "abierto"},
+            {"$set": {"estado": "atendido", "atendido_por": supervisor, "atendido_en": fecha}},
+        )
+        return r.modified_count == 1
+
+    async def ultimo_turno(self, sesion_id: str, usuario: str) -> dict[str, Any] | None:
+        def buscar() -> dict[str, Any] | None:
+            return self.db["auditoria"].find_one(
+                {"sesion_id": sesion_id, "usuario": usuario},
+                {"_id": 0, "turno_id": 1, "cliente_id": 1, "ruta": 1, "motivo": 1},
+                sort=[("fecha", -1)],
+            )
+
+        return await asyncio.to_thread(buscar)
 
     async def turno(self, turno_id: str) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.db["auditoria"].find_one, {"turno_id": turno_id}, {"_id": 0})

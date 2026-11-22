@@ -16,8 +16,8 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 5–6 | [Ingesta](apps/ingestion/): carpeta vigilada, OCR, Whisper, PII, chunking, índice híbrido, versionado, frescura ≈ 5 s | ✅ |
 | 6–8 | [API y agente](apps/api/) LangGraph: RAG híbrido, guardrails, human-in-the-loop firmado, memoria, auditoría · [LiteLLM](infra/litellm/) | ✅ |
 | 8 | [Evaluación golden](eval/): exactitud 100 %, groundedness 0,99, recall 0,98, p95 TTFT 1,5 s | ✅ |
+| 3 | [Front Angular](apps/frontend/) del asesor y del supervisor: chat con streaming, citas con versión, ficha del cliente, confirmación de acciones, 👍/👎, escalamiento · Vitest 94 % + Playwright E2E | ✅ |
 | 9 | [Modelos de ML](ml/): intención SVM (F1 0,92 GroupKFold, cascada con LLM), churn (AUC 0,71, señal), MLflow con promoción, drift PSI + Evidently · [ml-service](apps/ml-service/) | ✅ |
-| 3 | Front Angular del asesor | ⏳ |
 | 11 | Trazas (OpenTelemetry/Phoenix) y tableros | ⏳ |
 | 10, 12–14 | Docker, pruebas, Terraform, CI/CD | ⏳ |
 
@@ -45,6 +45,7 @@ curl -X POST http://localhost:8001/modelos/recargar
 
 | Servicio | URL local |
 |---|---|
+| **Interfaz del asesor** | **http://localhost:8080** (A-001 / SUP-001 con `API_DEMO_PASSWORD`) |
 | API del Copiloto | http://localhost:8000/docs (login: A-001 / SUP-001 con `API_DEMO_PASSWORD`) |
 | LiteLLM (gateway) | http://localhost:4000 (clave `LITELLM_MASTER_KEY`) |
 | CRM mock | http://localhost:8081/docs |

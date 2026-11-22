@@ -46,14 +46,18 @@ salida: citas validadas · confianza · "no encontrado → escalar" · PII redac
 | `POST /acciones/{id}/confirmar` · `/rechazar` | Confirmación por rol (ver arriba) |
 | `POST /feedback` | 👍/👎 (`valor` 1 o −1) y comentario sobre un `turno_id` |
 | `GET /conversaciones/{sesion}` | Historial auditado de la sesión |
+| `GET /clientes/{id}/ficha` | Panel del front: `obtenerCliente`, `obtenerSaldo` y `listarFacturas` del MCP en paralelo (PII ya filtrada); degrada por partes si un sistema no responde |
+| `POST /escalamientos` | Botón "Escalar" del asesor: el caso entra a la cola del supervisor con el turno y el cliente de la sesión (motivo redactado, Ley 1581) |
+| `GET /escalamientos` · `POST /escalamientos/{id}/atender` | Cola de casos escalados (solo supervisor/admin) |
 | `GET /health` · `/health/vivo` | Componentes (Redis, reranker) y versiones de prompts · liveness |
 
-El evento `fin` trae: respuesta, ruta, intención, riesgo de churn (si aplica), confianza, fuentes (documento, versión, sección, relevancia, citada, extracto), tools, propuestas, modelo, tokens, costo en USD y latencias (TTFT y total).
+El evento `fin` trae: respuesta, ruta, intención, cliente identificado, riesgo de churn (si aplica), confianza, fuentes (documento, versión, sección, relevancia, citada, extracto), tools, propuestas, modelo, tokens, costo en USD y latencias (TTFT y total).
 
 ## Memoria, auditoría y límites
 
-- **Redis**: memoria corta por sesión (6 turnos, TTL 2 h, texto enmascarado), propuestas pendientes y límite de 30 solicitudes por minuto por usuario (429 con `Retry-After`).
-- **MongoDB**: `auditoria` (pregunta enmascarada, intención y su origen svm/llm/reglas, ruta, motivo, tools, fuentes con versión, modelo, versiones de prompts, tokens, costo, latencias, confianza), `acciones` (quién propuso, quién confirmó, resultado) y `feedback`.
+- **Redis**: memoria corta por sesión (6 turnos, TTL 2 h, texto enmascarado), propuestas pendientes y límite de 30 solicitudes por minuto por usuario y recurso (chat y ficha llevan cupos separados; 429 con `Retry-After`).
+- **Turno protegido ante desconexión**: si el asesor cierra la pestaña a mitad de la respuesta, el turno termina igual y queda auditado y en memoria (`asyncio.shield`; antes la cancelación del stream lo cortaba sin auditar, visto en las pruebas E2E).
+- **MongoDB**: `auditoria` (pregunta enmascarada, intención y su origen svm/llm/reglas, ruta, motivo, tools, fuentes con versión, modelo, versiones de prompts, tokens, costo, latencias, confianza), `acciones` (quién propuso, quién confirmó, resultado), `feedback` y `escalamientos`.
 - **Prompts versionados** en [prompts/](src/copiloto_api/prompts/) (semver con historial de cambios); la versión queda en cada turno auditado.
 
 ## Ejecución
@@ -70,7 +74,7 @@ Documentación interactiva: http://localhost:8000/docs. Variables: `JWT_SECRET`,
 
 ```powershell
 cd apps/api
-uv run pytest            # 60 pruebas, cobertura 93 %
+uv run pytest            # 63 pruebas, cobertura 93 %
 uv run ruff check . ; uv run ruff format --check .
 ```
 

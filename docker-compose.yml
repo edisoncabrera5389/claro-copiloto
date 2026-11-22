@@ -215,6 +215,19 @@ services:
       resources:
         limits: { cpus: "2.0", memory: 1G }
 
+  frontend:
+    # Interfaz del asesor y del supervisor: http://localhost:8080 (Nginx reenvía /api → api:8000)
+    <<: *endurecido
+    build:
+      context: ./apps/frontend
+    image: claro-copiloto/frontend:${IMAGE_TAG:-local}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 64M }
+
   mcp-server:
     <<: *endurecido
     build:

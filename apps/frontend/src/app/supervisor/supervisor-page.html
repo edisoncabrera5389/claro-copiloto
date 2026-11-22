@@ -1,0 +1,62 @@
+<div class="supervisor">
+  <div class="conversacion-cab">
+    <h1>Supervisión</h1>
+    <button type="button" (click)="refrescar()">Actualizar</button>
+  </div>
+  @if (aviso(); as a) {
+    <p class="alerta" [class.error]="a.tipo === 'error'" [class.exito]="a.tipo === 'exito'" role="status">{{ a.texto }}</p>
+  }
+
+  <section class="tarjeta">
+    <h2>Acciones por aprobar <span class="contador">{{ pendientes().length }}</span></h2>
+    @for (p of pendientes(); track p.propuesta_id) {
+      <div class="propuesta">
+        <div class="propuesta-cab">
+          <strong>{{ acciones[p.accion] ?? p.accion }}</strong>
+          @if (p.requiere_rol === 'supervisor') {
+            <span class="insignia ambar">Requiere supervisor</span>
+          }
+        </div>
+        <p>{{ p.resumen }}</p>
+        <p class="tenue pequeno">Propuesta por {{ p.usuario }} · {{ fecha(p.creada) | date: 'short' }}</p>
+        <div class="acciones">
+          <button type="button" class="primario" [disabled]="procesando() === p.propuesta_id" (click)="decidir(p, true)">Aprobar y ejecutar</button>
+          <button type="button" [disabled]="procesando() === p.propuesta_id" (click)="decidir(p, false)">Rechazar</button>
+        </div>
+      </div>
+    } @empty {
+      <p class="tenue">No hay acciones pendientes.</p>
+    }
+  </section>
+
+  <section class="tarjeta">
+    <h2>Casos escalados <span class="contador">{{ escalamientos().length }}</span></h2>
+    @for (e of escalamientos(); track e.escalamiento_id) {
+      <div class="escalamiento">
+        <div class="propuesta-cab">
+          <strong>{{ e.cliente_id ?? 'Sin cliente identificado' }}</strong>
+          <span class="tenue pequeno">{{ e.usuario }} · {{ e.fecha | date: 'short' }}</span>
+        </div>
+        <p>{{ e.motivo }}</p>
+        <div class="acciones">
+          <button type="button" (click)="verConversacion(e)">
+            {{ conversaciones()[e.sesion_id] ? 'Ocultar conversación' : 'Ver conversación' }}
+          </button>
+          <button type="button" class="primario" [disabled]="procesando() === e.escalamiento_id" (click)="atender(e)">Marcar atendido</button>
+        </div>
+        @if (conversaciones()[e.sesion_id]; as turnos) {
+          <ol class="historial">
+            @for (t of turnos; track t.turno_id) {
+              <li>
+                <p><strong>Asesor:</strong> {{ t.pregunta }}</p>
+                <p><strong>Copiloto:</strong> {{ t.respuesta }}</p>
+              </li>
+            }
+          </ol>
+        }
+      </div>
+    } @empty {
+      <p class="tenue">No hay casos escalados abiertos.</p>
+    }
+  </section>
+</div>
