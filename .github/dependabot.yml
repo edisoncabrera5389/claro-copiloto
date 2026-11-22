@@ -54,3 +54,14 @@ updates:
       # Python 3.12 en las imágenes y en el CI: un cambio de versión de Python se decide, no se acepta por bot.
       - dependency-name: python
         update-types: [version-update:semver-major, version-update:semver-minor]
+
+  - package-ecosystem: terraform
+    directories: [/infra/terraform/plataforma, /infra/terraform/entornos/dev, /infra/terraform/entornos/prod]
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      proveedores: { patterns: ["*"] }
+    ignore:
+      # azurerm 6 traerá cambios incompatibles (p. ej. *_enabled → public_network_access): se migra a mano.
+      - dependency-name: hashicorp/azurerm
+        update-types: [version-update:semver-major]

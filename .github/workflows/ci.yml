@@ -106,6 +106,36 @@ jobs:
       - name: Workflows de GitHub (actionlint)
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
+  terraform:
+    name: Terraform (Azure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      TF: docker run --rm -v ${{ github.workspace }}/infra/terraform:/tf -v tf-cache:/cache -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Formato (terraform fmt)
+        run: $TF -w /tf hashicorp/terraform:1.17.2 fmt -recursive -check -diff
+      - name: Validación de la plataforma y de los ambientes dev y prod (sin credenciales)
+        run: |
+          for raiz in plataforma entornos/dev entornos/prod; do
+            $TF -w "/tf/$raiz" hashicorp/terraform:1.17.2 init -backend=false -input=false -lockfile=readonly
+            $TF -w "/tf/$raiz" hashicorp/terraform:1.17.2 validate
+          done
+      - name: Pruebas con proveedores simulados (terraform test)
+        run: $TF -w /tf/plataforma hashicorp/terraform:1.17.2 test
+      - name: tflint (reglas de azurerm)
+        run: |
+          docker run --rm -e GITHUB_TOKEN -v "$PWD:/data" -v tflint-plugins:/root/.tflint.d -w /data ghcr.io/terraform-linters/tflint:v0.66.0 --init
+          docker run --rm -v "$PWD:/data" -v tflint-plugins:/root/.tflint.d -w /data ghcr.io/terraform-linters/tflint:v0.66.0 --recursive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # descarga del plugin sin límite de tasa anónimo
+      - name: Seguridad de la IaC (checkov)
+        run: docker run --rm -v "$PWD:/tf" -w /tf bridgecrew/checkov:3.4.6 --config-file /tf/.checkov.yaml
+
   seguridad:
     name: Seguridad (secretos y dependencias)
     runs-on: ubuntu-latest
@@ -127,7 +157,7 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-          skip-dirs: infra/terraform
+          skip-dirs: infra/terraform   # la IaC la revisa checkov en el job terraform
       - name: Reporte completo (altas y críticas) para code scanning
         if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -139,7 +169,6 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           skip-dirs: infra/terraform
-          skip-setup-trivy: true
       - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         if: always() && github.event_name != 'pull_request'
         with:

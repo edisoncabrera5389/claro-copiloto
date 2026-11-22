@@ -1,0 +1,10 @@
+# checkov (CI y local): seguridad de la IaC. Las excepciones viven junto a cada recurso (#checkov:skip=ID:razón).
+#   docker run --rm -v ${PWD}:/tf -w /tf bridgecrew/checkov:3.4.6 --config-file /tf/.checkov.yaml
+directory:
+  - /tf
+framework:
+  - terraform
+skip-path:
+  - plataforma/tests   # sintaxis de terraform test (mock_provider, run), no es infraestructura
+compact: true
+quiet: true

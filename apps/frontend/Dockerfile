@@ -15,11 +15,13 @@ RUN npx ng build --configuration production
 FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24
 USER root
 RUN apk upgrade --no-cache
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx.conf /etc/nginx/nginx.conf.template
 COPY --from=build /app/dist/copiloto-front/browser /usr/share/nginx/html
 USER 101
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/salud || exit 1
 # Sin los scripts del entrypoint (intentan escribir en /etc/nginx, que es de solo lectura).
+ENV API_UPSTREAM=api:8000
 ENTRYPOINT []
-CMD ["nginx", "-g", "daemon off;"]
+# La configuración se arma al iniciar en /tmp (la raíz es de solo lectura): solo se sustituye API_UPSTREAM.
+CMD ["sh", "-c", "envsubst '${API_UPSTREAM}' < /etc/nginx/nginx.conf.template > /tmp/nginx.conf && exec nginx -c /tmp/nginx.conf -g 'daemon off;'"]

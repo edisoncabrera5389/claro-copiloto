@@ -1,0 +1,77 @@
+# Despliegue a Azure con Terraform (SAD 2.12/2.13). Manual: plan siempre; apply solo con aprobación del ambiente.
+#
+# Requisitos (una vez, fuera del repo): app de Entra ID con credencial federada OIDC para este repo (sin secretos),
+# rol Contributor + User Access Administrator en la suscripción, storage de estado remoto, y en GitHub:
+#   variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, TFSTATE_RG, TFSTATE_SA, CORREOS_ALERTA
+#              (prod además URL_CRM y URL_FACTURACION) · environments azure-dev y azure-prod (revisores en prod).
+# Las imágenes son las mismas que publica el CI en GHCR por SHA.
+name: Azure (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      entorno:
+        description: Ambiente
+        type: choice
+        options: [dev, prod]
+        default: dev
+      accion:
+        description: plan (sin cambios) o apply (requiere aprobación)
+        type: choice
+        options: [plan, apply]
+        default: plan
+      sha:
+        description: Commit cuyas imágenes se despliegan (debe tener CI verde en main)
+        required: true
+
+permissions:
+  contents: read
+  id-token: write   # token OIDC para Entra ID: sin credenciales guardadas
+
+concurrency:
+  group: terraform-${{ inputs.entorno }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: ${{ inputs.accion }} · ${{ inputs.entorno }}
+    runs-on: ubuntu-latest
+    environment: azure-${{ inputs.entorno }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: infra/terraform/entornos/${{ inputs.entorno }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "1"
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_imagen_tag: ${{ inputs.sha }}
+      TF_VAR_correos_alerta: ${{ vars.CORREOS_ALERTA }}   # lista JSON, p. ej. ["finops@empresa.com"]
+      TF_VAR_url_crm: ${{ vars.URL_CRM }}
+      TF_VAR_url_facturacion: ${{ vars.URL_FACTURACION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+      - name: Registro de imágenes (GHCR, en minúsculas)
+        run: echo "TF_VAR_imagen_registro=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/claro-copiloto" >> "$GITHUB_ENV"
+      - name: Estado remoto (Storage con Entra ID)
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=claro-copiloto-${{ inputs.entorno }}.tfstate"
+      - name: Plan
+        run: terraform plan -input=false -out=plan.tfplan
+      - name: Apply
+        if: inputs.accion == 'apply'
+        run: terraform apply -input=false plan.tfplan
+      - name: URL del frontend
+        if: inputs.accion == 'apply'
+        run: |
+          echo "### Frontend: $(terraform output -raw url_frontend)" >> "$GITHUB_STEP_SUMMARY"
