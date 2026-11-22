@@ -5,12 +5,12 @@ import json
 from copiloto_api.agente import RESPUESTA_FUERA_ALCANCE, RESPUESTA_NO_ENCONTRADO, crear_agente
 from copiloto_api.llm import Respuesta
 
-from .fakes import FakeLLM, FakeMCP, FakeRetriever, dependencias, fragmento, llamada, settings
+from .fakes import FakeLLM, FakeMCP, FakeML, FakeRetriever, dependencias, fragmento, llamada, settings
 
 
 async def correr(d, mensaje, historial=None, **cambios_settings):
     s = settings(**cambios_settings)
-    agente = crear_agente(s, d.llm, d.retriever, d.mcp, d.memoria.guardar_propuesta)
+    agente = crear_agente(s, d.llm, d.retriever, d.mcp, d.memoria.guardar_propuesta, d.ml)
     eventos, final = [], {}
     async for modo, dato in agente.astream(
         {
@@ -166,8 +166,8 @@ async def test_cancelacion_ejecuta_la_skill_y_propone_visita_obligatoria():
     )
     final, _ = await correr(d, "El cliente C-1013 quiere cancelar por fallas")
     nombres = [n for n, _ in mcp.llamadas]
-    assert nombres == ["evaluarRetencion", "crearTicket"]  # sin depender del LLM
-    assert mcp.llamadas[1][1]["prioridad"] == "prioritaria" and mcp.llamadas[1][1]["escalar_a"] == "nivel2"
+    assert nombres == ["evaluarRetencion", "obtenerCliente", "crearTicket"]  # sin depender del LLM
+    assert mcp.llamadas[2][1]["prioridad"] == "prioritaria" and mcp.llamadas[2][1]["escalar_a"] == "nivel2"
     assert final["propuestas"][0]["accion"] == "crearTicket" and final["intencion"] == "cancelacion"
     assert d.llm.llamadas[0]["json"] is False  # con cliente no hay llamada de clasificación
 
@@ -189,3 +189,72 @@ async def test_tope_de_pasos_fuerza_respuesta_final_sin_tools():
     )
     await correr(d, "Datos de C-1001", max_pasos=2, max_llamadas_misma_tool=10)
     assert d.llm.llamadas[-1]["tools"] == []  # la última llamada no ofrece tools
+
+
+# ------------------------------------------------------------------ ml-service (feat/ml-models) ------
+
+
+def pred(intencion, confianza):
+    return {"intencion": intencion, "confianza": confianza, "version": "1"}
+
+
+async def test_svm_da_la_intencion_y_el_llm_solo_la_guardia_de_alcance():
+    d = dependencias(
+        FakeLLM([Respuesta("Cuesta $109.900 [1].", [])], clasificacion={"fuera_de_alcance": False}),
+        ml=FakeML(pred("consulta_planes", 0.95)),
+    )
+    final, _ = await correr(d, "¿Cuánto cuesta Fibra 500 para el cliente con CC 1023456789?")
+    assert final["intencion"] == "consulta_planes" and final["origen_intencion"] == "svm"
+    assert "fuera del alcance" in d.llm.llamadas[0]["mensajes"][0]["content"].lower()  # prompt alcance
+    assert "1023456789" not in d.ml.textos[0]  # el ml-service recibe el texto sin PII
+
+
+async def test_guardia_de_alcance_rechaza_aunque_el_svm_clasifique():
+    d = dependencias(
+        FakeLLM(clasificacion={"fuera_de_alcance": True}), ml=FakeML(pred("consulta_planes", 0.8))
+    )
+    final, _ = await correr(d, "¿Cuál será el precio de la acción de América Móvil?")
+    assert final["ruta"] == "fuera_alcance" and len(d.llm.llamadas) == 1
+
+
+async def test_svm_con_baja_confianza_usa_reglas():
+    d = dependencias(FakeLLM([Respuesta("Ok (CRM).", [])]), ml=FakeML(pred("facturacion", 0.4)))
+    final, _ = await correr(d, "El cliente C-1004 quiere cancelar")
+    assert final["intencion"] == "cancelacion" and final["origen_intencion"] == "reglas"
+
+
+async def test_svm_dudoso_sin_cliente_pasa_al_clasificador_llm():
+    d = dependencias(FakeLLM([Respuesta("Cuesta $109.900 [1].", [])]), ml=FakeML(pred("facturacion", 0.5)))
+    final, _ = await correr(d, "¿Cuánto cuesta Fibra 500?")
+    assert final["origen_intencion"] == "llm" and final["intencion"] == "consulta_planes"
+    assert len([c for c in d.llm.llamadas if c["json"]]) == 1  # una sola llamada: intención + alcance
+
+
+async def test_ml_caido_usa_el_clasificador_llm_completo():
+    d = dependencias(FakeLLM([Respuesta("Cuesta $109.900 [1].", [])]))  # FakeML() → None
+    final, _ = await correr(d, "¿Cuánto cuesta Fibra 500?")
+    assert final["origen_intencion"] == "llm" and final["intencion"] == "consulta_planes"
+
+
+async def test_cancelacion_con_svm_incluye_riesgo_de_churn_como_senal():
+    ficha = {"cliente_id": "C-1007", "antiguedad_meses": 30, "servicios": []}
+    churn = {"nivel": "alto", "probabilidad": 0.62, "factores": [{"variable": "dias_mora"}], "version": "1"}
+    mcp = FakeMCP(
+        {
+            "evaluarRetencion": lambda a: (True, {"cliente_id": "C-1007", "elegible": True}, None),
+            "obtenerCliente": lambda a: (True, ficha, None),
+        }
+    )
+    d = dependencias(
+        FakeLLM([Respuesta("Elegible a RET-A [1]. Prioridad alta por riesgo de churn.", [])]),
+        mcp=mcp,
+        ml=FakeML(pred("cancelacion", 0.97), churn),
+    )
+    final, _ = await correr(d, "El cliente C-1007 quiere irse, pide un descuento")
+    assert final["origen_intencion"] == "svm" and d.ml.fichas == [ficha]
+    assert final["riesgo_churn"]["nivel"] == "alto"
+    skill = next(m for m in d.llm.llamadas[0]["mensajes"] if m.get("tool_call_id") == "skill_retencion")
+    contenido = json.loads(skill["content"])
+    riesgo = contenido["riesgo_churn"]
+    assert riesgo["probabilidad"] == 0.62 and "POL-RET-2026" in riesgo["uso"]
+    assert contenido["retencion"]["elegible"] is True  # la elegibilidad la sigue dando la política

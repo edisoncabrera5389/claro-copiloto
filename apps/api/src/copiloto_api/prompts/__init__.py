@@ -26,4 +26,4 @@ def cargar(nombre: str) -> Prompt:
 
 
 def versiones() -> dict[str, str]:
-    return {n: cargar(n).version for n in ("sistema", "clasificador")}
+    return {n: cargar(n).version for n in ("sistema", "clasificador", "alcance")}

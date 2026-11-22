@@ -123,6 +123,40 @@ services:
     volumes: [ollama-modelos:/root/.ollama]
     ports: ["127.0.0.1:11434:11434"]
 
+  mlflow:
+    # Tracking + Model Registry (alias staging / produccion). Artefactos servidos por el propio servidor.
+    <<: *infra
+    image: ghcr.io/mlflow/mlflow:v3.18.0
+    command: ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000",
+              "--backend-store-uri", "sqlite:////mlflow/mlflow.db",
+              "--artifacts-destination", "/mlflow/artifacts", "--serve-artifacts",
+              "--allowed-hosts", "mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"]
+    volumes: [mlflow-datos:/mlflow]
+    ports: ["127.0.0.1:5000:5000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  ml-service:
+    <<: *endurecido
+    build:
+      context: ./apps/ml-service
+    image: claro-copiloto/ml-service:${IMAGE_TAG:-local}
+    environment:
+      ML_MLFLOW_TRACKING_URI: http://mlflow:5000
+      ML_MONGO_URL: mongodb://mongo:27017
+      ML_FECHA_REFERENCIA: ${MOCKS_FECHA_REFERENCIA:-2026-11-18}
+    ports: ["127.0.0.1:8001:8001"]
+    depends_on:
+      mlflow: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+
   ingesta-watcher:
     <<: *ingesta
     command: ["python", "-m", "ingesta", "watcher"]
@@ -162,6 +196,7 @@ services:
       API_LLM_BASE_URL: http://litellm:4000/v1
       API_QDRANT_URL: http://qdrant:6333
       API_MCP_URL: http://mcp-server:8090/mcp
+      API_ML_URL: http://ml-service:8001
       API_REDIS_URL: redis://redis:6379/1
       API_MONGO_URL: mongodb://mongo:27017
       API_RERANKER_ACTIVO: ${API_RERANKER_ACTIVO:-false}
@@ -175,6 +210,7 @@ services:
       redis: { condition: service_healthy }
       mongo: { condition: service_healthy }
       mcp-server: { condition: service_healthy }
+      ml-service: { condition: service_started }   # sin él la API sigue con reglas / clasificador LLM
     deploy:
       resources:
         limits: { cpus: "2.0", memory: 1G }
@@ -230,3 +266,4 @@ volumes:
   qdrant-datos:
   modelos:
   ollama-modelos:
+  mlflow-datos:

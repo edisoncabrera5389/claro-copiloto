@@ -168,12 +168,33 @@ class FakeMCP:
         return True, {"ok": nombre}, None
 
 
+class FakeML:
+    """ml-service simulado. `intencion=None` imita el servicio caído (el cliente real devuelve None)."""
+
+    def __init__(self, intencion: dict[str, Any] | None = None, churn: dict[str, Any] | None = None):
+        self.respuesta_intencion = intencion
+        self.respuesta_churn = churn
+        self.textos: list[str] = []
+        self.fichas: list[dict[str, Any]] = []
+
+    async def intencion(self, texto: str) -> dict[str, Any] | None:
+        self.textos.append(texto)
+        return self.respuesta_intencion
+
+    async def churn(self, ficha: dict[str, Any]) -> dict[str, Any] | None:
+        self.fichas.append(ficha)
+        return self.respuesta_churn
+
+
 def dependencias(
     llm: FakeLLM | None = None,
     retriever: FakeRetriever | None = None,
     mcp: FakeMCP | None = None,
     s: Settings | None = None,
+    ml: FakeML | None = None,
 ) -> Dependencias:
     s = s or settings()
     memoria = Memoria(s, fakeredis.FakeAsyncRedis(decode_responses=True), mongomock.MongoClient()["copiloto"])
-    return Dependencias(llm or FakeLLM(), retriever or FakeRetriever(), mcp or FakeMCP(), memoria)
+    return Dependencias(
+        llm or FakeLLM(), retriever or FakeRetriever(), mcp or FakeMCP(), memoria, ml or FakeML()
+    )

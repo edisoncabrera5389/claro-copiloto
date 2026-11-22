@@ -15,9 +15,9 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 4, 7 | [Servidor MCP](apps/mcp-server/): 11 tools, skill de retención, confirmación firmada, circuit breaker | ✅ |
 | 5–6 | [Ingesta](apps/ingestion/): carpeta vigilada, OCR, Whisper, PII, chunking, índice híbrido, versionado, frescura ≈ 5 s | ✅ |
 | 6–8 | [API y agente](apps/api/) LangGraph: RAG híbrido, guardrails, human-in-the-loop firmado, memoria, auditoría · [LiteLLM](infra/litellm/) | ✅ |
-| 8 | [Evaluación golden](eval/): exactitud 100 %, groundedness 0,99, recall 0,98, p95 TTFT 1,9 s | ✅ |
+| 8 | [Evaluación golden](eval/): exactitud 100 %, groundedness 0,99, recall 0,98, p95 TTFT 1,5 s | ✅ |
+| 9 | [Modelos de ML](ml/): intención SVM (F1 0,92 GroupKFold, cascada con LLM), churn (AUC 0,71, señal), MLflow con promoción, drift PSI + Evidently · [ml-service](apps/ml-service/) | ✅ |
 | 3 | Front Angular del asesor | ⏳ |
-| 9 | Modelos de intención y churn (MLflow, drift) | ⏳ |
 | 11 | Trazas (OpenTelemetry/Phoenix) y tableros | ⏳ |
 | 10, 12–14 | Docker, pruebas, Terraform, CI/CD | ⏳ |
 
@@ -37,6 +37,10 @@ docker compose up -d --build
 
 # 4. Carga inicial de la base de conocimiento (la ingesta la procesa sola)
 python scripts/sembrar_inbox.py
+
+# 5. Entrenar y registrar los modelos en MLflow; el ml-service los toma al recargar
+cd ml && uv sync && uv run python -m copiloto_ml entrenar && cd ..
+curl -X POST http://localhost:8001/modelos/recargar
 ```
 
 | Servicio | URL local |
@@ -48,6 +52,8 @@ python scripts/sembrar_inbox.py
 | ERP mock | http://localhost:8083/docs |
 | Servidor MCP | http://localhost:8090/mcp · estado: http://localhost:8090/health |
 | Qdrant (índice) | http://localhost:6333/dashboard |
+| MLflow (experimentos y registry) | http://localhost:5000 |
+| ML service (intención, churn, drift) | http://localhost:8001/docs · estado: http://localhost:8001/health |
 | Ingesta | `docker compose exec ingesta-worker python -m ingesta estado` |
 
 ## Estructura del repositorio

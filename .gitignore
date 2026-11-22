@@ -13,6 +13,7 @@ data/inbox/*
 data/processed/
 # Reportes de evaluación: incluyen las preguntas y respuestas del golden (insumo de la prueba)
 eval/reportes/
+ml/reportes/
 
 # --- Python ---
 __pycache__/

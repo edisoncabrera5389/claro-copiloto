@@ -28,6 +28,7 @@ from copiloto_api.config import Settings
 from copiloto_api.guardrails import analizar_entrada, validar_citas
 from copiloto_api.llm import ClienteLLM, Uso
 from copiloto_api.mcp_cliente import ClienteMCP, a_formato_llm
+from copiloto_api.ml_cliente import ClienteML
 from copiloto_api.pii import Boveda, redactar
 from copiloto_api.rag import Fragmento, Retriever
 
@@ -101,6 +102,8 @@ class Estado(TypedDict, total=False):
     detalle: str | None
     intencion: str
     confianza_intencion: float
+    origen_intencion: str  # svm | reglas | llm
+    riesgo_churn: dict[str, Any] | None  # señal de priorización (nunca decide la elegibilidad)
     # resultado
     fuentes: list[dict[str, Any]]
     tools: list[dict[str, Any]]
@@ -129,6 +132,7 @@ def crear_agente(
     retriever: Retriever,
     mcp: ClienteMCP,
     guardar_propuesta: Callable[[dict[str, Any]], Awaitable[str]],
+    ml: ClienteML,
     fecha_referencia: str = "2026-11-18",
 ) -> Any:
     async def emitir_token(texto: str) -> None:
@@ -161,47 +165,70 @@ def crear_agente(
             "precarga": [],
         }
 
+    def intencion_ml(pred: dict[str, Any] | None) -> tuple[str, float, str] | None:
+        """Etiqueta del SVM si supera el umbral (SAD 2.7). Bajo el umbral, reglas como respaldo."""
+        if pred and pred.get("intencion") in INTENCIONES and pred.get("confianza", 0) >= s.umbral_intencion:
+            return pred["intencion"], float(pred["confianza"]), "svm"
+        return None
+
+    def intencion_reglas(e: Estado) -> tuple[str, float, str]:
+        if _CANCELACION.search(e["mensaje"]):
+            return "cancelacion", 0.9, "reglas"
+        return "otro", 0.5, "reglas"
+
     async def clasificar(e: Estado) -> dict[str, Any]:
-        """Clasificación y búsqueda en PARALELO: si no hay cliente, el LLM recibe las fuentes desde la primera
-        llamada (ahorra una ida y vuelta completa y garantiza que la respuesta se base en las fuentes)."""
+        """Cascada SVM → LLM (ml/README.md): el SVM del ml-service da la intención en milisegundos; si duda
+        (confianza < umbral) o no responde, decide el clasificador LLM (sin cliente) o las reglas (con
+        cliente, para no sumar latencia). Medido en notas únicas: SVM 0,73 · LLM 0,94 · cascada 0,92 con
+        solo el 8 % de las notas al LLM. Sin cliente siempre hay una llamada LLM mínima de alcance, EN
+        PARALELO con la búsqueda (el LLM del agente recibe las fuentes desde la primera llamada)."""
         get_stream_writer()({"tipo": "estado", "paso": "clasificando"})
+        tarea_ml = asyncio.ensure_future(ml.intencion(e["mensaje_llm"]))  # texto ya sin PII (marcadores)
+        buscar = e["ruta"] == "agente"
         if e.get("cliente_id"):
-            # Con un cliente identificado el tema es de atención por definición: la intención se decide
-            # con reglas (sin llamada al LLM, ~0,6 s menos de TTFT). El SVM de feat/ml-models la reemplaza.
-            intencion = "cancelacion" if _CANCELACION.search(e["mensaje"]) else "otro"
+            # Con un cliente identificado el tema es de atención por definición: sin guardia de alcance.
+            intencion, confianza, origen = intencion_ml(await tarea_ml) or intencion_reglas(e)
             precarga = []
-            if e["ruta"] == "agente" and intencion == "cancelacion":  # para citar la política de retención
+            if buscar and intencion == "cancelacion":  # para citar la política de retención
                 precarga = await retriever.buscar(
                     f"Política de retención de clientes ofertas {e['mensaje_llm']}"
                 )
             return {
                 "intencion": intencion,
-                "confianza_intencion": 0.9 if intencion == "cancelacion" else 0.5,
+                "confianza_intencion": confianza,
+                "origen_intencion": origen,
                 "precarga": precarga,
             }
-        p = prompts.cargar("clasificador")
-        tarea_llm = llm.chat(
+        tarea_busqueda = asyncio.ensure_future(retriever.buscar(e["mensaje_llm"])) if buscar else None
+        decision = intencion_ml(await tarea_ml)  # ~10 ms; la búsqueda ya está en curso
+        p = prompts.cargar("alcance" if decision is not None else "clasificador")
+        r = await llm.chat(
             s.modelo_economico,
             [{"role": "user", "content": p.render(mensaje=e["mensaje_llm"])}],
             e["uso"],
             json_mode=True,
             temperatura=0,
         )
-        if e["ruta"] == "agente":
-            r, precarga = await asyncio.gather(tarea_llm, retriever.buscar(e["mensaje_llm"]))
-        else:
-            r, precarga = await tarea_llm, []
+        precarga = await tarea_busqueda if tarea_busqueda else []
         try:
             datos = json.loads(r.contenido)
         except json.JSONDecodeError:
             datos = {}
-        intencion = datos.get("intencion") if datos.get("intencion") in INTENCIONES else "otro"
+        if decision is None:  # SVM dudoso o caído: el clasificador LLM da la intención
+            llm_int = datos.get("intencion")
+            decision = (
+                (llm_int, float(datos.get("confianza", 0.5)), "llm")
+                if llm_int in INTENCIONES
+                else intencion_reglas(e)
+            )
+        intencion, confianza, origen = decision or intencion_reglas(e)
         cambios: dict[str, Any] = {
             "intencion": intencion,
-            "confianza_intencion": float(datos.get("confianza", 0.5)),
+            "confianza_intencion": confianza,
+            "origen_intencion": origen,
             "precarga": precarga,
         }
-        if e["ruta"] == "agente" and datos.get("fuera_de_alcance") is True and not e.get("cliente_id"):
+        if buscar and datos.get("fuera_de_alcance") is True:
             cambios.update(ruta="fuera_alcance", motivo="FUERA_DE_ALCANCE")
         return cambios
 
@@ -286,6 +313,7 @@ def crear_agente(
         advertencias = list(e.get("advertencias", []))
         conteo: Counter[str] = Counter()
         respuesta = ""
+        riesgo_churn: dict[str, Any] | None = None
 
         def numerar(frags: list[Fragmento]) -> str:
             """Numeración global [n] entre búsquedas del mismo turno (sin duplicar fragmentos)."""
@@ -369,22 +397,42 @@ def crear_agente(
         if e.get("intencion") == "cancelacion" and e.get("cliente_id"):
             # POL-RET-2026 en código: la skill se ejecuta SIEMPRE (no depende de que el LLM la elija; en
             # pruebas a veces consultaba solo los tickets y se saltaba la propuesta de visita técnica).
-            conteo["evaluarRetencion"] += 1
-            inicio = time.perf_counter()
-            ok, datos, error = await mcp.llamar("evaluarRetencion", {"cliente_id": e["cliente_id"]})
-            tools_log.append(
-                {
-                    "nombre": "evaluarRetencion",
-                    "ok": ok,
-                    "error": (error or "")[:120] or None,
-                    "ms": round((time.perf_counter() - inicio) * 1000, 1),
-                    "argumentos": ["cliente_id"],
-                    "automatica": True,
-                }
+            # La ficha (obtenerCliente) corre en paralelo: alimenta la señal de riesgo de churn (ml-service).
+            async def automatica(nombre: str) -> tuple[bool, Any, str | None]:
+                conteo[nombre] += 1
+                inicio = time.perf_counter()
+                r = await mcp.llamar(nombre, {"cliente_id": e["cliente_id"]})
+                tools_log.append(
+                    {
+                        "nombre": nombre,
+                        "ok": r[0],
+                        "error": (r[2] or "")[:120] or None,
+                        "ms": round((time.perf_counter() - inicio) * 1000, 1),
+                        "argumentos": ["cliente_id"],
+                        "automatica": True,
+                    }
+                )
+                return r
+
+            (ok, datos, error), (ok_f, ficha, _) = await asyncio.gather(
+                automatica("evaluarRetencion"), automatica("obtenerCliente")
             )
+            if ok_f and isinstance(ficha, dict):
+                riesgo_churn = await ml.churn(ficha)
             resultado_eval: Any = datos if ok else {"error": error}
             if ok and isinstance(datos, dict):
                 resultado_eval = await visita_obligatoria(datos, datos)
+            if riesgo_churn:
+                resultado_eval = {
+                    "retencion": resultado_eval,
+                    "ficha_cliente": ficha,
+                    "riesgo_churn": {
+                        **{k: riesgo_churn.get(k) for k in ("nivel", "probabilidad", "factores")},
+                        "uso": "Solo prioriza la atención; la elegibilidad la decide POL-RET-2026.",
+                    },
+                }
+            elif ok_f:
+                resultado_eval = {"retencion": resultado_eval, "ficha_cliente": ficha}
             mensajes.append(
                 {
                     "role": "assistant",
@@ -540,6 +588,11 @@ def crear_agente(
             "propuestas": propuestas,
             "modelo": modelo,
             "advertencias": advertencias,
+            "riesgo_churn": (
+                {k: riesgo_churn.get(k) for k in ("nivel", "probabilidad", "factores", "version")}
+                if riesgo_churn
+                else None
+            ),
         }
 
     async def salida(e: Estado) -> dict[str, Any]:

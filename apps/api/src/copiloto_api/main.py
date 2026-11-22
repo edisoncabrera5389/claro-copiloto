@@ -29,6 +29,7 @@ from copiloto_api.confirmacion import Confirmaciones
 from copiloto_api.llm import ClienteLLM
 from copiloto_api.mcp_cliente import ClienteMCP
 from copiloto_api.memoria import Memoria
+from copiloto_api.ml_cliente import ClienteML
 from copiloto_api.rag import Retriever
 from copiloto_api.seguridad import Usuario, autenticar, emitir_jwt, usuario_actual
 
@@ -42,6 +43,7 @@ class Dependencias:
     retriever: Retriever
     mcp: ClienteMCP
     memoria: Memoria
+    ml: ClienteML
 
 
 class Login(BaseModel):
@@ -72,7 +74,7 @@ def _construir_dependencias(s: Settings) -> Dependencias:  # pragma: no cover - 
         aioredis.from_url(s.redis_url, decode_responses=True),
         MongoClient(s.mongo_url, serverSelectionTimeoutMS=5000)[s.mongo_db],
     )
-    return Dependencias(llm, retriever, ClienteMCP(s.mcp_url), memoria)
+    return Dependencias(llm, retriever, ClienteMCP(s.mcp_url), memoria, ClienteML(s.ml_url, s.ml_timeout_s))
 
 
 def _cargar_reranker(s: Settings, retriever: Retriever, estado: dict[str, str]) -> None:  # pragma: no cover
@@ -101,11 +103,15 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
             ).start()
         elif d.retriever.reranker is not None:
             app.state.estado["reranker"] = "listo"
-        app.state.agente = crear_agente(s, d.llm, d.retriever, d.mcp, d.memoria.guardar_propuesta)
+        app.state.agente = crear_agente(s, d.llm, d.retriever, d.mcp, d.memoria.guardar_propuesta, d.ml)
         try:  # precalentar: el primer turno no paga el descubrimiento de tools del MCP
             await d.mcp.herramientas()
         except Exception as e:  # noqa: BLE001 - el MCP puede no estar listo aún; se reintenta en el primer turno
             log.warning("MCP no disponible al arrancar: %s", type(e).__name__)
+        try:  # ...ni las conexiones de embeddings (LiteLLM → OpenAI) y Qdrant: medido, +1,2 s de TTFT en frío
+            await d.retriever.buscar("precalentamiento del copiloto")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Retriever no disponible al arrancar: %s", type(e).__name__)
         yield
 
     app = FastAPI(title="Claro Copiloto API", version="0.1.0", lifespan=ciclo)
@@ -160,6 +166,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
             "respuesta": final.get("respuesta", ""),
             "confianza": final.get("confianza"),
             "intencion": final.get("intencion"),
+            "riesgo_churn": final.get("riesgo_churn"),
             "ruta": final.get("ruta"),
             "motivo": final.get("motivo"),
             "fuentes": [
@@ -186,6 +193,7 @@ def crear_app(settings: Settings | None = None, deps: Dependencias | None = None
                 "pregunta": final.get("mensaje_llm", ""),
                 "cliente_id": final.get("cliente_id"),
                 "confianza_intencion": final.get("confianza_intencion"),
+                "origen_intencion": final.get("origen_intencion"),
                 "citadas": final.get("citadas", []),
                 "prompt_versions": prompts.versiones(),
                 "reranker": request.app.state.estado.get("reranker"),
