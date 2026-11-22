@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from copiloto_api.llm import Respuesta
 from copiloto_api.main import crear_app
 
-from .fakes import PASSWORD, FakeLLM, dependencias, llamada, settings
+from .fakes import PASSWORD, FakeLLM, FakeMCP, dependencias, llamada, settings
 
 
 def cliente(d=None, **cambios):
@@ -169,7 +169,8 @@ def test_limite_de_solicitudes_por_usuario():
         codigos = [
             c.post("/chat/sincrono", json={"mensaje": "planes"}, headers=h).status_code for _ in range(3)
         ]
-    assert codigos == [200, 200, 429]
+        ficha = c.get("/clientes/C-1001/ficha", headers=h).status_code  # cupo propio: no lo agota el chat
+    assert codigos == [200, 200, 429] and ficha == 200
 
 
 @pytest.mark.parametrize("ruta", ["/health", "/health/vivo"])
@@ -179,3 +180,44 @@ def test_salud(ruta):
     assert r["estado"] == "ok"
     if ruta == "/health":
         assert r["componentes"] == {"reranker": "desactivado", "redis": "ok"} and r["prompts"]["sistema"]
+
+
+def test_ficha_del_cliente_en_paralelo_y_validacion():
+    mcp = FakeMCP(
+        {
+            "obtenerCliente": lambda a: (True, {"cliente_id": a["cliente_id"], "nombre": "Ana"}, None),
+            "obtenerSaldo": lambda a: (True, {"saldo_pendiente": 1000}, None),
+            "listarFacturas": lambda a: (False, None, "SERVICIO_NO_DISPONIBLE: 503"),
+        }
+    )
+    with cliente(dependencias(mcp=mcp)) as c:
+        r = c.get("/clientes/C-1001/ficha", headers=token(c)).json()
+        assert r["cliente"]["nombre"] == "Ana" and r["saldo"]["saldo_pendiente"] == 1000
+        assert r["facturas"] is None  # degradación parcial: el panel muestra lo que hay
+        assert c.get("/clientes/1001/ficha", headers=token(c)).status_code == 422
+        assert c.get("/clientes/C-1001/ficha").status_code == 401
+
+
+def test_ficha_cliente_inexistente_404():
+    mcp = FakeMCP({"obtenerCliente": lambda a: (False, None, "CLIENTE_NO_ENCONTRADO: no existe")})
+    with cliente(dependencias(mcp=mcp)) as c:
+        assert c.get("/clientes/C-9999/ficha", headers=token(c)).status_code == 404
+
+
+def test_escalamiento_manual_llega_a_la_cola_del_supervisor():
+    d = dependencias(FakeLLM([Respuesta("Revisa [1].", [])]))
+    with cliente(d) as c:
+        r = c.post("/chat/sincrono", json={"mensaje": "Datos de C-1001"}, headers=token(c)).json()
+        e = c.post(
+            "/escalamientos",
+            json={"sesion_id": r["sesion_id"], "motivo": "Cliente molesto, CC 1023456789"},
+            headers=token(c),
+        ).json()
+        assert c.get("/escalamientos", headers=token(c)).status_code == 403  # el asesor no ve la cola
+        cola = c.get("/escalamientos", headers=token(c, "SUP-001")).json()
+        assert cola[0]["cliente_id"] == "C-1001" and cola[0]["turno_id"] == r["turno_id"]
+        assert "1023456789" not in cola[0]["motivo"]  # Ley 1581
+        ruta = f"/escalamientos/{e['escalamiento_id']}/atender"
+        assert c.post(ruta, headers=token(c, "SUP-001")).json() == {"estado": "atendido"}
+        assert c.post(ruta, headers=token(c, "SUP-001")).status_code == 404
+        assert c.get("/escalamientos", headers=token(c, "SUP-001")).json() == []

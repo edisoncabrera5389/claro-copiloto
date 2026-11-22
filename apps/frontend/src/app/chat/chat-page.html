@@ -1,0 +1,51 @@
+<div class="chat">
+  <section class="conversacion tarjeta">
+    <div class="conversacion-cab">
+      <h1>Asistente</h1>
+      <div class="acciones">
+        <button type="button" [disabled]="!store.sesionId()" (click)="escalando.set(!escalando())">Escalar a supervisor</button>
+        <button type="button" (click)="nueva()">Nueva conversación</button>
+      </div>
+    </div>
+
+    @if (escalando()) {
+      <form class="escalar" (ngSubmit)="escalar()">
+        <input name="motivo" [(ngModel)]="motivo" maxlength="300" placeholder="Motivo del escalamiento (sin datos personales)" />
+        <button type="submit" class="primario">Escalar</button>
+      </form>
+    }
+    @if (aviso(); as a) {
+      <p class="alerta" [class.error]="a.tipo === 'error'" [class.exito]="a.tipo === 'exito'" role="status">{{ a.texto }}</p>
+    }
+
+    <div class="hilo" #hilo>
+      @for (t of store.turnos(); track $index) {
+        <app-turno [turno]="t" />
+      } @empty {
+        <div class="vacio">
+          <p>Describe el caso del cliente. Puedes incluir su código (C-XXXX) para consultar sus datos.</p>
+          <div class="sugerencias">
+            @for (s of sugerencias; track s) {
+              <button type="button" class="chip" (click)="enviar(s)">{{ s }}</button>
+            }
+          </div>
+        </div>
+      }
+    </div>
+
+    <form class="entrada" (ngSubmit)="enviar()">
+      <textarea name="texto" [(ngModel)]="texto" (keydown)="teclado($event)" rows="2" maxlength="2000"
+        placeholder="Escribe la consulta… (Enter envía, Shift+Enter nueva línea)" aria-label="Consulta"></textarea>
+      <button type="submit" class="primario" [disabled]="store.enCurso() || !texto.trim()">
+        {{ store.enCurso() ? 'Respondiendo…' : 'Enviar' }}
+      </button>
+    </form>
+  </section>
+
+  <aside class="lateral">
+    @if (store.clienteId(); as id) {
+      <app-ficha-cliente [clienteId]="id" [riesgo]="store.riesgoChurn()" [version]="ejecutadas()" />
+    }
+    <app-panel-fuentes />
+  </aside>
+</div>

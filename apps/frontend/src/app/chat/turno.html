@@ -1,0 +1,84 @@
+@let t = turno();
+<article class="turno">
+  <div class="burbuja pregunta">{{ t.pregunta }}</div>
+
+  <div class="burbuja respuesta" aria-live="polite" [attr.aria-busy]="t.enCurso">
+    @if (ruta(); as r) {
+      <span [class]="'insignia ' + r.clase">{{ r.texto }}</span>
+    }
+
+    @for (b of bloques(); track $index) {
+      <p [class.item]="b.tipo === 'item'">@for (s of b.segmentos; track $index) {@switch (s.tipo) {@case ('negrita') {<strong>{{ s.texto }}</strong>}@case ('cita') {<button type="button" class="cita" [class.valida]="citadas().has(s.n)" [attr.aria-label]="'Ver fuente ' + s.n" (click)="store.verFuente(t.id, s.n)">{{ s.n }}</button>}@default {<ng-container>{{ s.texto }}</ng-container>}}}</p>
+    }
+
+    @if (paso(); as p) {
+      <p class="paso"><span class="giro" aria-hidden="true"></span>{{ p }}…</p>
+    }
+    @if (t.tools.length) {
+      <div class="tools">
+        @for (h of t.tools; track $index) {
+          <span class="chip" [class.falla]="!h.ok" [title]="h.automatica ? 'Ejecutada por regla de negocio' : ''">
+            {{ h.nombre }}{{ h.automatica ? ' ⚙' : '' }}
+          </span>
+        }
+      </div>
+    }
+    @if (t.error) {
+      <p class="alerta error" role="alert">{{ t.error }}</p>
+    }
+
+    @for (p of t.propuestas; track p.propuesta_id) {
+      <app-propuesta [propuesta]="p" (decidir)="store.decidir(t.id, p, $event)" />
+    }
+
+    @if (t.resultado; as r) {
+      @if (r.riesgo_churn; as rc) {
+        <p class="churn" [attr.data-nivel]="rc.nivel">
+          Riesgo de abandono <strong>{{ rc.nivel }}</strong> ({{ rc.probabilidad | percent: '1.0-0' }})
+          @if (rc.factores.length) {
+            · factor principal: {{ rc.factores[0].descripcion }}
+          }
+          <span class="tenue">— señal de prioridad, no define la oferta</span>
+        </p>
+      }
+      @if (r.sin_cita) {
+        <p class="alerta">Respuesta sin cita a la fuente: verifícala antes de usarla.</p>
+      }
+
+      <footer class="pie">
+        @if (t.feedback) {
+          <span class="tenue">Gracias por calificar {{ t.feedback === 1 ? '👍' : '👎' }}</span>
+        } @else {
+          <button type="button" class="icono" aria-label="Respuesta útil" (click)="calificar(1)">👍</button>
+          <button type="button" class="icono" aria-label="Respuesta no útil" (click)="calificar(-1)">👎</button>
+        }
+        <button type="button" class="enlace" (click)="detalles.set(!detalles())">
+          {{ detalles() ? 'Ocultar detalles' : 'Detalles' }}
+        </button>
+        @if (r.confianza !== null) {
+          <span class="tenue">Confianza {{ r.confianza | percent: '1.0-0' }}</span>
+        }
+      </footer>
+
+      @if (comentando()) {
+        <form class="comentario" (ngSubmit)="calificar(-1)">
+          <input name="comentario" [(ngModel)]="comentario" maxlength="500" placeholder="¿Qué faltó o estuvo mal? (opcional)" />
+          <button type="submit">Enviar</button>
+        </form>
+      }
+
+      @if (detalles()) {
+        <dl class="detalles">
+          <dt>Ruta</dt><dd>{{ r.ruta }}{{ r.motivo ? ' · ' + r.motivo : '' }}</dd>
+          <dt>Intención</dt><dd>{{ r.intencion ?? '—' }}</dd>
+          <dt>Modelo</dt><dd>{{ r.modelo ?? '—' }}</dd>
+          <dt>Latencia</dt><dd>primer token {{ r.latencias.ttft_ms | number }} ms · total {{ r.latencias.total_ms | number }} ms</dd>
+          <dt>Costo</dt><dd>US$ {{ r.uso.costo_usd | number: '1.4-4' }} · {{ r.uso.tokens_entrada + r.uso.tokens_salida | number }} tokens</dd>
+          @if (r.advertencias.length) {
+            <dt>Advertencias</dt><dd>{{ r.advertencias.join(' · ') }}</dd>
+          }
+        </dl>
+      }
+    }
+  </div>
+</article>

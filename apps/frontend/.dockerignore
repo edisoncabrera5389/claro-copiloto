@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.angular
+e2e
+playwright-report
+test-results
+*.spec.ts
+.vscode
+README.md
