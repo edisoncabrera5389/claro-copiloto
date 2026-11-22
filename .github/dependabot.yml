@@ -1,0 +1,30 @@
+# Actualizaciones de dependencias (seguridad de la cadena de suministro). Agrupadas por ecosistema y semanales
+# para no inundar de PRs; cada PR pasa por el CI completo (pruebas, Trivy, gitleaks) antes de fusionarse.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      acciones: { patterns: ["*"] }
+
+  - package-ecosystem: uv
+    directories: [/apps/api, /apps/mcp-server, /apps/ml-service, /apps/mocks, /apps/ingestion, /ml]
+    schedule: { interval: weekly }
+    groups:
+      python-menores:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /apps/frontend
+    schedule: { interval: weekly }
+    groups:
+      angular: { patterns: ["@angular/*", "@angular-devkit/*", "angular-eslint"] }
+      npm-menores:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/apps/api, /apps/mcp-server, /apps/ml-service, /apps/mocks, /apps/ingestion, /apps/frontend]
+    schedule: { interval: weekly }
+    groups:
+      imagenes-base: { patterns: ["*"] }

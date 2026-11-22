@@ -1,0 +1,151 @@
+# Despliegue continuo en la máquina de demo (SAD 2.13): imágenes de GHCR por SHA → gates → rollback si fallan.
+#
+# Corre en un self-hosted runner (Windows, etiqueta `claro-demo`) que tiene Docker, el .env y los insumos.
+# Salvaguardas (el repo es público; ver docs/04_ci_cd.md):
+#   - solo se dispara por un CI exitoso de un PUSH a main o a mano (nunca por PRs);
+#   - ambiente `demo` de GitHub (se le pueden exigir aprobadores);
+#   - el runner se inicia a mano durante la demo (run.cmd), no como servicio;
+#   - en GitHub: Settings → Actions → "Require approval for all external contributors".
+name: CD (máquina de demo)
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit a desplegar (vacío = el último de main con imágenes publicadas)"
+        required: false
+      golden:
+        description: "Correr el golden con el LLM real como gate (~US$ 0,08)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: despliegue-demo
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: [self-hosted, windows, claro-demo]
+    environment: demo
+    timeout-minutes: 40
+    env:
+      SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
+      GOLDEN: ${{ github.event_name == 'workflow_run' || inputs.golden }}
+      COMPOSE_PROJECT_NAME: claro-copiloto
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+
+      - name: Configuración local del runner (.env e insumos fuera del repo)
+        run: |
+          # Variables de la máquina (archivo .env del runner): COPILOTO_ENV_FILE y COPILOTO_DATOS
+          if (-not (Test-Path $env:COPILOTO_ENV_FILE)) { throw "Falta COPILOTO_ENV_FILE en el runner" }
+          if (-not (Test-Path "$env:COPILOTO_DATOS\raw\04_apis")) { throw "Faltan los insumos en COPILOTO_DATOS" }
+          Copy-Item $env:COPILOTO_ENV_FILE .env    # se borra al final (paso "Limpieza")
+          $owner = "${{ github.repository_owner }}".ToLower()
+          "REGISTRY=ghcr.io/$owner/claro-copiloto" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "IMAGE_TAG=$env:SHA" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "T_INICIO=$((Get-Date).ToUniversalTime().ToString('o'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Versión en ejecución (para el rollback)
+        id: previa
+        run: |
+          $imagen = docker inspect claro-copiloto-api-1 --format '{{.Config.Image}}' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $imagen) {
+            $registro, $tag = $imagen -replace '/api:', '|' -split '\|'
+            "registry=$registro" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+            "tag=$tag" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+            Write-Output "En ejecución: $imagen"
+          } else { Write-Output "No hay una versión previa en ejecución" }
+          exit 0
+
+      - name: Descargar imágenes del commit desde GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $env:TOKEN | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker compose pull crm-mock facturacion-mock erp-mock mcp-server ingesta-watcher ingesta-worker api ml-service frontend
+          exit $LASTEXITCODE
+
+      - name: Gate de ML (F1 intención ≥ 0,80 · AUC churn ≥ 0,65 sobre el corpus real)
+        run: |
+          # Pruebas de ml/ con los CSV reales (no versionados): reproduce los hallazgos y el gate del SAD.
+          # Código de solo lectura y entorno virtual dentro del contenedor: nunca toca un .venv del host.
+          docker run --rm -v "${PWD}\ml:/ml:ro" -v "$env:COPILOTO_DATOS\raw\03_datos:/data/raw/03_datos:ro" `
+            -v uv-cache-ci:/root/.cache/uv -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_LINK_MODE=copy -w /ml `
+            ghcr.io/astral-sh/uv:0.13.9-python3.12-trixie-slim `
+            sh -c "uv sync --frozen -q && uv run --frozen pytest -q -p no:cacheprovider -k corpus_real --no-cov"
+          exit $LASTEXITCODE
+
+      - name: Desplegar (healthchecks)
+        run: |
+          docker compose up -d --no-build --wait --wait-timeout 300
+          exit $LASTEXITCODE
+
+      - name: Smoke · API de punta a punta
+        run: |
+          py -3.13 scripts/smoke_api.py
+          exit $LASTEXITCODE
+
+      - name: Smoke · observabilidad y RPA
+        run: |
+          py -3.13 scripts/smoke_observabilidad.py
+          exit $LASTEXITCODE
+
+      - name: Gate golden (8 KPIs con el LLM real)
+        if: env.GOLDEN == 'true'
+        run: |
+          py -3.13 eval/correr_golden.py
+          $codigo = $LASTEXITCODE
+          $reporte = Get-ChildItem eval\reportes\golden_*.md | Sort-Object LastWriteTime | Select-Object -Last 1
+          if ($reporte) { Get-Content $reporte.FullName -Encoding utf8 | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY }
+          exit $codigo
+
+      - name: Rollback a la versión anterior
+        if: failure() && steps.previa.outputs.tag != ''
+        run: |
+          Write-Output "Fallo un gate: vuelvo a ${{ steps.previa.outputs.registry }}/*:${{ steps.previa.outputs.tag }}"
+          $env:REGISTRY = "${{ steps.previa.outputs.registry }}"
+          $env:IMAGE_TAG = "${{ steps.previa.outputs.tag }}"
+          docker compose up -d --no-build --wait --wait-timeout 300
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          py -3.13 scripts/smoke_api.py
+          "## ⚠️ Rollback a ``$env:IMAGE_TAG`` (falló un gate de ``$env:SHA``)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          exit 1
+
+      - name: Lead time (commit → desplegado y validado)
+        if: success()
+        run: |
+          $commit = [datetime]::Parse((git show -s --format=%cI $env:SHA)).ToUniversalTime()
+          $minutos = [math]::Round(((Get-Date).ToUniversalTime() - $commit).TotalMinutes, 1)
+          $despliegue = [math]::Round(((Get-Date).ToUniversalTime() - [datetime]::Parse($env:T_INICIO).ToUniversalTime()).TotalMinutes, 1)
+          $meta = if ($minutos -lt 30) { "✅" } else { "❌" }
+          @(
+            "## Despliegue ``$($env:SHA.Substring(0,7))``",
+            "| Indicador | Valor | Meta |", "|---|---|---|",
+            "| Lead time (commit → validado) | $minutos min | < 30 min $meta |",
+            "| Despliegue + gates | $despliegue min | |"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: Limpieza
+        if: always()
+        run: |
+          Remove-Item .env -Force -ErrorAction SilentlyContinue
+          docker logout ghcr.io | Out-Null
+          exit 0

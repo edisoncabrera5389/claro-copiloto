@@ -93,7 +93,7 @@ def http(metodo: str, url: str, cuerpo: Any = None, token: str = "", timeout: in
             **({"Authorization": f"Bearer {token}"} if token else {}),
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 # nosec B310
         return json.loads(r.read())
 
 
@@ -112,7 +112,7 @@ def chat_sse(api: str, token: str, mensaje: str) -> tuple[dict[str, Any], float 
     inicio, ttft, evento, fin = time.perf_counter(), None, None, None
     for intento in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=180) as r:  # noqa: S310 # nosec B310
                 for crudo in r:
                     linea = crudo.decode("utf-8").rstrip("\r\n")
                     if linea.startswith("event:"):

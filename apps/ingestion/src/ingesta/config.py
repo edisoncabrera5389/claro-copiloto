@@ -53,4 +53,4 @@ class Settings(BaseSettings):
     whisper_dir: Path = Path("/modelos/whisper")
 
     # --- Salud del proceso ---
-    latido_dir: Path = Path("/tmp")  # noqa: S108 - archivo de latido dentro del contenedor
+    latido_dir: Path = Path("/tmp")  # noqa: S108 - archivo de latido dentro del contenedor # nosec B108

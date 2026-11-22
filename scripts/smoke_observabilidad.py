@@ -41,7 +41,7 @@ def http(url: str, datos: dict | None = None, token: str | None = None, texto: b
         headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})},
         method="POST" if datos is not None else "GET",
     )
-    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 # nosec B310
         cuerpo = r.read().decode()
         return cuerpo if texto else json.loads(cuerpo)
 

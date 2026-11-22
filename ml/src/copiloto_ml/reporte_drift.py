@@ -20,15 +20,17 @@ RAIZ = Path(__file__).resolve().parents[3]
 
 
 def muestras_servicio(url: str) -> pd.DataFrame:
-    with urllib.request.urlopen(f"{url}/drift/muestras?modelo=churn", timeout=30) as r:  # noqa: S310 - URL local
+    with urllib.request.urlopen(f"{url}/drift/muestras?modelo=churn", timeout=30) as r:  # noqa: S310 - URL local # nosec B310
         return pd.DataFrame(json.loads(r.read()))
 
 
-def generar(actual: pd.DataFrame | None = None, destino: Path | None = None) -> Path:
+def generar(
+    actual: pd.DataFrame | None = None, destino: Path | None = None, referencia_csv: Path | None = None
+) -> Path:
     from evidently import DataDefinition, Dataset, Report
     from evidently.presets import DataDriftPreset
 
-    referencia, _ = cargar_churn(RAIZ / "data" / "raw" / "03_datos" / "clientes_churn.csv")
+    referencia, _ = cargar_churn(referencia_csv or RAIZ / "data" / "raw" / "03_datos" / "clientes_churn.csv")
     if actual is None:
         actual = muestras_servicio(os.getenv("ML_SERVICE_URL", "http://127.0.0.1:8001"))
     if len(actual) < 5:

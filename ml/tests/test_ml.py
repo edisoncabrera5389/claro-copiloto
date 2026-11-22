@@ -193,3 +193,41 @@ def test_corpus_real_reproduce_los_hallazgos():
     c, rep_c = cargar_churn(RAW / "clientes_churn.csv")
     assert rep_c.duplicados == 12 and rep_c.correcciones["antiguedad_negativa"] == 15
     assert 0.65 <= churn.evaluar(churn.CANDIDATOS[churn.CAMPEON], c)["auc"] < 0.75  # bajo la meta: se reporta
+
+
+def test_comparacion_svm_vs_llm_mide_la_cascada(tmp_path, monkeypatch):
+    from copiloto_ml import comparacion_llm
+
+    df, _ = cargar_tickets(tickets_sinteticos(tmp_path / "t.csv"))
+    verdad = dict(zip(df.descripcion, df.categoria, strict=False))
+    llamadas = []
+
+    def llm_falso(nota, url, clave):  # acierta siempre salvo una nota; 600 ms y costo fijo
+        llamadas.append(nota)
+        return ("facturacion" if nota == "pide el NIP" else verdad[nota]), 0.6, 0.00004
+
+    monkeypatch.setattr(comparacion_llm, "_llm", llm_falso)
+    r = comparacion_llm.comparar(df, url="http://llm", clave="x", umbral=0.7)
+    assert r["notas_evaluadas"] == df.descripcion.nunique() == len(llamadas)
+    assert r["llm_zero_shot"]["respuestas_invalidas"] == 0 and r["llm_zero_shot"]["latencia_ms_p50"] == 600.0
+    assert 0 <= r["cascada"]["fraccion_al_llm"] <= 1
+    assert r["cascada"]["costo_por_1000_usd"] <= r["llm_zero_shot"]["costo_por_1000_usd"]
+    assert r["svm"]["costo_por_1000_usd"] == 0.0 and "no ejecutado" in r["llm_fine_tuning"].lower()
+
+
+def test_reporte_de_drift_evidently(tmp_path):
+    from copiloto_ml import reporte_drift
+
+    referencia = churn_sintetico(tmp_path / "churn.csv")
+    actual = pd.DataFrame(
+        {
+            "dias_mora": [80.0] * 20,
+            "antiguedad_meses": [3.0] * 20,
+            "tipo_servicio": ["movil"] * 20,
+            "nps_ultimo": [None] * 20,
+        }  # sin datos en producción: se excluye del informe
+    )
+    html = reporte_drift.generar(actual, tmp_path / "drift.html", referencia_csv=referencia)
+    assert html.is_file() and html.stat().st_size > 10_000
+    with pytest.raises(SystemExit):
+        reporte_drift.generar(actual.head(3), tmp_path / "x.html", referencia_csv=referencia)

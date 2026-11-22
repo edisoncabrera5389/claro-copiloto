@@ -1,0 +1,4 @@
+# Etiquetas propias de self-hosted runners (cd.yml corre en la máquina de demo)
+self-hosted-runner:
+  labels:
+    - claro-demo

@@ -90,6 +90,6 @@ class Metricas:
             def log_message(self, *args: object) -> None:  # sin ruido en el log del worker
                 return
 
-        servidor = ThreadingHTTPServer(("0.0.0.0", puerto), Manejador)  # noqa: S104 - red interna de Docker
+        servidor = ThreadingHTTPServer(("0.0.0.0", puerto), Manejador)  # noqa: S104 - red interna de Docker # nosec B104
         threading.Thread(target=servidor.serve_forever, daemon=True).start()
         return servidor

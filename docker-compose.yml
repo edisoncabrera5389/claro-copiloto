@@ -1,5 +1,7 @@
 # Claro Copiloto · entorno local.  Uso:  docker compose up -d
 # Requiere .env (copiar de .env.example) y los insumos en data/raw (scripts/bootstrap_data.py).
+# Imágenes propias: ${REGISTRY}/<servicio>:${IMAGE_TAG} (local: claro-copiloto/*:local; el despliegue continuo usa
+# REGISTRY=ghcr.io/<dueño>/claro-copiloto e IMAGE_TAG=<sha del commit>). COPILOTO_DATOS: carpeta de los insumos.
 # Se irán agregando servicios por bloque: api, litellm, ml-service, frontend, observabilidad...
 
 name: claro-copiloto
@@ -17,7 +19,7 @@ x-mock: &mock
   <<: *endurecido
   build:
     context: ./apps/mocks
-  image: claro-copiloto/mocks:${IMAGE_TAG:-local}
+  image: ${REGISTRY:-claro-copiloto}/mocks:${IMAGE_TAG:-local}
   environment: &mock-env
     MOCKS_API_KEY: ${MOCKS_API_KEY:?Defina MOCKS_API_KEY en .env}
     MOCKS_FAIL_RATE: ${MOCKS_FAIL_RATE:-0.02}
@@ -25,7 +27,7 @@ x-mock: &mock
     MOCKS_FECHA_REFERENCIA: ${MOCKS_FECHA_REFERENCIA:-2026-11-18}
   volumes:
     # Datos sintéticos de la prueba (no versionados), solo lectura.
-    - ./data/raw/04_apis/datos_mock:/data:ro
+    - ${COPILOTO_DATOS:-./data}/raw/04_apis/datos_mock:/data:ro
   deploy:
     resources:
       limits: { cpus: "0.5", memory: 192M }
@@ -41,14 +43,14 @@ x-ingesta: &ingesta
   <<: *endurecido
   build:
     context: ./apps/ingestion
-  image: claro-copiloto/ingesta:${IMAGE_TAG:-local}
+  image: ${REGISTRY:-claro-copiloto}/ingesta:${IMAGE_TAG:-local}
   environment: &ingesta-env
     INGESTA_INBOX_DIR: /data/inbox
     INGESTA_REDIS_URL: redis://redis:6379/0
     INGESTA_MONGO_URL: mongodb://mongo:27017
     INGESTA_QDRANT_URL: http://qdrant:6333
   volumes:
-    - ./data/inbox:/data/inbox:ro   # carpeta vigilada (en Azure: Blob Storage + Event Grid)
+    - ${COPILOTO_DATOS:-./data}/inbox:/data/inbox:ro   # carpeta vigilada (en Azure: Blob Storage + Event Grid)
     - modelos:/modelos              # caché del modelo Whisper
   depends_on:
     redis: { condition: service_healthy }
@@ -152,7 +154,7 @@ services:
     <<: *endurecido
     build:
       context: ./apps/ml-service
-    image: claro-copiloto/ml-service:${IMAGE_TAG:-local}
+    image: ${REGISTRY:-claro-copiloto}/ml-service:${IMAGE_TAG:-local}
     environment:
       ML_MLFLOW_TRACKING_URI: http://mlflow:5000
       ML_MONGO_URL: mongodb://mongo:27017
@@ -290,7 +292,7 @@ services:
     <<: *endurecido
     build:
       context: ./apps/api
-    image: claro-copiloto/api:${IMAGE_TAG:-local}
+    image: ${REGISTRY:-claro-copiloto}/api:${IMAGE_TAG:-local}
     environment:
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET en .env}
       JWT_EXPIRES_MIN: ${JWT_EXPIRES_MIN:-480}
@@ -327,7 +329,7 @@ services:
     <<: *endurecido
     build:
       context: ./apps/frontend
-    image: claro-copiloto/frontend:${IMAGE_TAG:-local}
+    image: ${REGISTRY:-claro-copiloto}/frontend:${IMAGE_TAG:-local}
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       api: { condition: service_healthy }
@@ -339,7 +341,7 @@ services:
     <<: *endurecido
     build:
       context: ./apps/mcp-server
-    image: claro-copiloto/mcp-server:${IMAGE_TAG:-local}
+    image: ${REGISTRY:-claro-copiloto}/mcp-server:${IMAGE_TAG:-local}
     environment:
       MCP_CRM_URL: http://crm-mock:8081/v1
       MCP_FACTURACION_URL: http://facturacion-mock:8082/v1

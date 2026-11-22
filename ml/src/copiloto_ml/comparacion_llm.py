@@ -43,7 +43,7 @@ def _llm(nota: str, url: str, clave: str) -> tuple[str, float, float]:
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {clave}"},
     )
     inicio = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 - URL local del gateway
+    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 - URL local del gateway # nosec B310
         datos = json.loads(r.read())
     latencia = time.perf_counter() - inicio
     uso = datos.get("usage", {})
