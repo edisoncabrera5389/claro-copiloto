@@ -16,3 +16,10 @@ paths = [
   '''^apps/ingestion/tests/test_identificacion\.py$''',
   '''^scripts/bootstrap_data\.py$''',
 ]
+
+[[allowlists]]
+description = "Terraform: nombre del secreto en Key Vault (el valor lo genera random_password; nunca está en el código)"
+condition   = "AND"
+regexTarget = "line"
+regexes     = ['''API_DEMO_PASSWORD\s*=\s*"demo-password"''']
+paths       = ['''^infra/terraform/plataforma/apps\.tf$''']
