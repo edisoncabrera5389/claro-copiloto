@@ -12,7 +12,7 @@ dependencies = [
     "skops==0.16.0",
     # Mismas versiones con las que se entrenó (ml/uv.lock): un modelo sklearn no se carga con otra versión.
     "scikit-learn==1.9.1",
-    "pandas==2.3.3",
+    "pandas==3.1.1",
     "numpy==2.5.5",
     "pymongo>=4.10",
     "prometheus-client>=0.26.0",
