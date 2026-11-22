@@ -1,0 +1,206 @@
+# Integración continua (SAD 2.13): lint → pruebas con cobertura → seguridad → imágenes escaneadas → GHCR.
+# Corre en runners de GitHub, SIN secretos: es seguro para PRs de forks. Lo que necesita insumos privados, el LLM o la
+# solución levantada (golden, smoke, gates de ML) corre en el despliegue continuo (cd.yml) en la máquina de demo.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.9"
+  PYTHON_VERSION: "3.12"   # la misma de las imágenes
+
+jobs:
+  python:
+    name: Python · ${{ matrix.proyecto }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        proyecto: [apps/mocks, apps/mcp-server, apps/ingestion, apps/api, apps/ml-service, ml]
+    defaults:
+      run:
+        working-directory: ${{ matrix.proyecto }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.proyecto }}/uv.lock
+      - name: Dependencias (lockfile congelado)
+        run: uv sync --frozen
+      - name: Lint (ruff)
+        run: |
+          uv run --frozen ruff check . --output-format github
+          uv run --frozen ruff format --check .
+      - name: Seguridad del código (Bandit, severidad media o alta)
+        run: uvx bandit==1.9.2 -r src -ll -q
+      - name: Pruebas con cobertura (gate ≥ 70 %)
+        # Las pruebas que necesitan data/raw (insumos privados, no versionados) se omiten aquí y corren en cd.yml.
+        run: uv run --frozen pytest --cov-fail-under=70 --cov-report=xml:coverage.xml -p no:cacheprovider
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: cobertura-${{ strategy.job-index }}
+          path: ${{ matrix.proyecto }}/coverage.xml
+          if-no-files-found: ignore
+
+  frontend:
+    name: Frontend · Angular
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24   # trae npm 11 (npm 10.9 falla al resolver los peers de Vitest)
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Lint (ESLint + accesibilidad)
+        run: npm run lint
+      - name: Pruebas unitarias con cobertura (gate ≥ 70 % en angular.json)
+        run: npm run test:cov
+      - name: Build de producción
+        run: npx ng build --configuration production
+
+  infra:
+    name: Infraestructura como código
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: docker compose válido (con variables ficticias)
+        run: |
+          cp .env.example .env
+          sed -i -E 's/^([A-Z0-9_]+)=\r?$/\1=valor-ficticio-para-validar-la-configuracion/' .env
+          docker compose config -q
+      - name: Reglas de alerta (promtool check + pruebas unitarias)
+        run: |
+          docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p --entrypoint promtool \
+            prom/prometheus:v3.16.0 check rules alertas.yml
+          docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p --entrypoint promtool \
+            prom/prometheus:v3.16.0 test rules alertas_test.yml
+      - name: Tableros de Grafana generados = versionados
+        run: |
+          python3 infra/observability/grafana/generar_tableros.py
+          git diff --exit-code infra/observability/grafana/dashboards
+      - name: Flujos de n8n y JSON válidos
+        run: for f in infra/n8n/flujos/*.json; do python3 -m json.tool "$f" > /dev/null; done
+      - name: Workflows de GitHub (actionlint)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
+  seguridad:
+    name: Seguridad (secretos y dependencias)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write   # resultados en la pestaña Security (code scanning)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # gitleaks revisa todo el historial
+      - name: Secretos en el historial (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.30.1 git --no-banner --redact -v .
+      - name: Dependencias y configuración (Trivy, gate en críticas)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-dirs: infra/terraform
+      - name: Reporte completo (altas y críticas) para code scanning
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-fs.sarif
+          skip-dirs: infra/terraform
+          skip-setup-trivy: true
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        if: always() && github.event_name != 'pull_request'
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  imagenes:
+    name: Imagen · ${{ matrix.nombre }}
+    needs: [python, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write   # solo se usa en push a main
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nombre: mocks, contexto: apps/mocks }
+          - { nombre: mcp-server, contexto: apps/mcp-server }
+          - { nombre: ingesta, contexto: apps/ingestion }
+          - { nombre: api, contexto: apps/api }
+          - { nombre: ml-service, contexto: apps/ml-service }
+          - { nombre: frontend, contexto: apps/frontend }
+    env:
+      PUBLICAR: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Nombre en GHCR (en minúsculas)
+        run: echo "IMAGEN=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/claro-copiloto/${{ matrix.nombre }}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build multi-stage (base actualizada, caché de GitHub)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.contexto }}
+          pull: true
+          load: true
+          push: false
+          tags: ${{ env.IMAGEN }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.nombre }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nombre }}
+      - name: Usuario no root
+        run: |
+          usuario=$(docker image inspect "$IMAGEN:${{ github.sha }}" --format '{{.Config.User}}')
+          echo "Usuario de la imagen: ${usuario:-root}"
+          test -n "$usuario" && test "$usuario" != "root" && test "$usuario" != "0"
+      - name: CVEs de la imagen (Trivy, gate en críticas · meta 0)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGEN }}:${{ github.sha }}
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Publicar en GHCR (tag = SHA del commit)
+        if: env.PUBLICAR == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGEN:${{ github.sha }}" "$IMAGEN:main"
+          docker push "$IMAGEN:${{ github.sha }}"
+          docker push "$IMAGEN:main"

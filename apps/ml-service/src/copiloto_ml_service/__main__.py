@@ -14,7 +14,7 @@ def main() -> None:
     uvicorn.run(
         "copiloto_ml_service.app:crear_app",
         factory=True,
-        host=os.getenv("ML_HOST", "0.0.0.0"),  # noqa: S104 - dentro del contenedor
+        host=os.getenv("ML_HOST", "0.0.0.0"),  # noqa: S104 - dentro del contenedor # nosec B104
         port=int(os.getenv("ML_PORT", "8001")),
         access_log=False,
         server_header=False,

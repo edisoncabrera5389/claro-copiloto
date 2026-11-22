@@ -47,7 +47,7 @@ def mock_admin(base: str, metodo: str, ruta: str, cuerpo: dict | None = None) ->
         method=metodo,
         headers={"X-API-Key": api_key(), "Content-Type": "application/json"},
     )
-    urllib.request.urlopen(req, timeout=5).close()  # noqa: S310
+    urllib.request.urlopen(req, timeout=5).close()  # noqa: S310 # nosec B310
 
 
 def emitir_token(accion: str, parametros: dict, asesor: str, rol: str = "asesor") -> str:
@@ -191,7 +191,7 @@ class Smoke:
         errores = [(await self.tool("obtenerCliente", cliente_id="C-1001"))[1] for _ in range(3)]
         self.check("SERVICIO_NO_DISPONIBLE" in errores[0], "CRM 503 tras reintentos → error claro al agente")
         self.check(errores[-1].startswith("CIRCUITO_ABIERTO"), f"luego falla rápido: {errores[-1][:70]}")
-        with urllib.request.urlopen(MCP_URL.removesuffix("/mcp") + "/health", timeout=3) as h:  # noqa: S310
+        with urllib.request.urlopen(MCP_URL.removesuffix("/mcp") + "/health", timeout=3) as h:  # noqa: S310 # nosec B310
             estado = json.loads(h.read())["sistemas"]["crm"]
         self.check(
             estado["estado"] == "abierto",

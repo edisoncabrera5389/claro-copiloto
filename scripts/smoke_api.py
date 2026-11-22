@@ -40,7 +40,7 @@ def http(metodo: str, url: str, cuerpo: Any = None, token: str = "", api_key: st
     datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
     req = urllib.request.Request(url, data=datos, method=metodo, headers=cab)  # noqa: S310 - URL local
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 # nosec B310
             return r.status, json.loads(r.read() or b"null")
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"null")

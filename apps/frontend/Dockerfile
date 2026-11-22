@@ -10,7 +10,11 @@ COPY src ./src
 RUN npx ng build --configuration production
 
 # Etapa 2: Nginx sin privilegios, solo los estáticos y la configuración.
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+# Trivy (gate de CI): la base 1.29-alpine tenía 1 CVE crítica y 56 altas; la estable 1.30.6 aún trae 4 críticas en
+# nginx (corregidas en 1.30.7, sin imagen publicada). Mainline 1.31.7 + parches de Alpine: 0 críticas, 0 altas.
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24
+USER root
+RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/dist/copiloto-front/browser /usr/share/nginx/html
 USER 101

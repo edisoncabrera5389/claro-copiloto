@@ -1,0 +1,18 @@
+# gitleaks (CI y local): reglas por defecto + excepciones revisadas una a una (22-nov-2026, 10 hallazgos, todos
+# falsos positivos). `.env` nunca estuvo en el historial; las excepciones son estrechas a propósito.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Marcadores de .env.example y claves de los dobles de prueba (no son secretos)"
+regexes = [
+  '''cambiar-por-[a-z0-9-]+''',
+  '''clave-de-pruebas-123''',
+]
+
+[[allowlists]]
+description = "Tuplas de nombres de archivo de los insumos (alta entropía, no son claves)"
+paths = [
+  '''^apps/ingestion/tests/test_identificacion\.py$''',
+  '''^scripts/bootstrap_data\.py$''',
+]

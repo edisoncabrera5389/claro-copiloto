@@ -21,7 +21,7 @@ def main() -> None:
     uvicorn.run(
         f"mocks.{servicio}:create_app",
         factory=True,
-        host=os.getenv("MOCKS_HOST", "0.0.0.0"),  # noqa: S104 - escucha dentro del contenedor
+        host=os.getenv("MOCKS_HOST", "0.0.0.0"),  # noqa: S104 - escucha dentro del contenedor # nosec B104
         port=puerto,
         # El access log de uvicorn imprime la query string (numero_documento = PII): se usa el log propio.
         access_log=False,

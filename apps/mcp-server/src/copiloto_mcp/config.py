@@ -32,5 +32,5 @@ class Settings(BaseSettings):
     breaker_abierto_s: float = Field(default=30.0, gt=0)
 
     # --- Servidor ---
-    host: str = "0.0.0.0"  # noqa: S104 - escucha dentro del contenedor
+    host: str = "0.0.0.0"  # noqa: S104 - escucha dentro del contenedor # nosec B104
     port: int = 8090

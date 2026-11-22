@@ -64,7 +64,7 @@ class Smoke:
             cab["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=datos, headers=cab, method=metodo)  # noqa: S310
         try:
-            with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 - URL local configurable
+            with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 - URL local configurable # nosec B310
                 return Respuesta(r.status, dict(r.headers), r.read())
         except urllib.error.HTTPError as e:
             return Respuesta(e.code, dict(e.headers), e.read())

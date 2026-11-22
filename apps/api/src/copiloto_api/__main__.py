@@ -13,7 +13,7 @@ def main() -> None:
     uvicorn.run(
         "copiloto_api.main:crear_app",
         factory=True,
-        host=os.getenv("API_HOST", "0.0.0.0"),  # noqa: S104 - dentro del contenedor
+        host=os.getenv("API_HOST", "0.0.0.0"),  # noqa: S104 - dentro del contenedor # nosec B104
         port=int(os.getenv("API_PORT", "8000")),
         access_log=False,
         server_header=False,

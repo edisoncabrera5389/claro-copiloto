@@ -19,7 +19,8 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 3 | [Front Angular](apps/frontend/) del asesor y del supervisor: chat con streaming, citas con versión, ficha del cliente, confirmación de acciones, 👍/👎, escalamiento · Vitest 94 % + Playwright E2E | ✅ |
 | 9 | [Modelos de ML](ml/): intención SVM (F1 0,92 GroupKFold, cascada con LLM), churn (AUC 0,71, señal), MLflow con promoción, drift PSI + Evidently · [ml-service](apps/ml-service/) | ✅ |
 | 11 | [Observabilidad y RPA](infra/): trazas OpenTelemetry → Phoenix (sin PII, `trace_id` en la auditoría), métricas Prometheus, 12 alertas probadas con promtool, 2 tableros Grafana como código, n8n (acción confirmada → ERP, escalamiento, alertas → acción) | ✅ |
-| 10, 12–14 | Docker, pruebas, Terraform, CI/CD | ⏳ |
+| 10, 12, 14 | [CI/CD](docs/04_ci_cd.md): lint, pruebas con cobertura ≥ 70 %, Bandit, gitleaks, Trivy (0 CVEs críticas en imágenes y dependencias), imágenes no root en GHCR por SHA · despliegue en la máquina de demo con gate de ML, smoke, golden y rollback automático | ✅ |
+| 13 | Terraform (Azure) con `validate` / `test` | ⏳ |
 
 ## Inicio rápido
 
@@ -95,6 +96,7 @@ Cada carpeta principal tiene su propio `README.md` con propósito, ejecución y 
 | [docs/01_planteamiento.md](docs/01_planteamiento.md) | Problema, actores, casos de uso, KPIs, riesgos, business case |
 | [docs/02_arquitectura.md](docs/02_arquitectura.md) | Vistas, flujo agéntico, RAG, multi-LLM, ML, seguridad, despliegue, ADR |
 | [docs/03_gestion_proyecto.md](docs/03_gestion_proyecto.md) | Plan, equipo, RACI, gobierno, criterios de aceptación, riesgos |
+| [docs/04_ci_cd.md](docs/04_ci_cd.md) | Pipeline CI/CD, gates de calidad, hallazgos de seguridad y configuración del self-hosted runner |
 | [docs/presentacion/](docs/presentacion/) | Presentación de la propuesta (PPT y PDF) |
 
 El PDF consolidado (SAD) se genera desde estos Markdown con [docs/build/build_sad.py](docs/build/build_sad.py).
