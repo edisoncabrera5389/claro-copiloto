@@ -44,6 +44,7 @@ flowchart LR
 | CVEs | **0 críticas** en dependencias y en cada imagen (Trivy); altas y críticas a *code scanning* | CI |
 | Contenedores | Usuario no root en todas las imágenes | CI |
 | IaC y configuración | `docker compose config`, `promtool test rules`, tableros generados = versionados, actionlint | CI |
+| Terraform (Azure) | `fmt`, `validate` de plataforma/dev/prod, `terraform test` (5 escenarios con mocks), tflint y checkov sin fallas | CI |
 | ML | F1 macro intención ≥ 0,80 (GroupKFold) · AUC churn ≥ 0,65 sobre el corpus real | CD |
 | Funcional | `smoke_api.py` (12) y `smoke_observabilidad.py` (9) | CD |
 | RAG / agente | Golden: exactitud ≥ 80 %, groundedness ≥ 0,85, recall ≥ 0,90, sin cita ≤ 5 %, tareas ≥ 90 %, 0 acciones no permitidas, p95 ≤ 2 s / 8 s | CD |
@@ -72,6 +73,13 @@ con tráfico 10 % → 100 % (bloque `feat/terraform`).
   BOM: los scripts del CD son solo ASCII y `GITHUB_ENV`/`GITHUB_OUTPUT`/resumen se escriben con `AppendAllText`.
 - **Dependabot:** el primer barrido abrió 7 PRs en minutos (Angular 22, que exige Node ≥ 22.22) y saturó los runners →
   revisión mensual, máximo 2 PRs por ecosistema e ignorar versiones mayores de Angular, Vitest, pandas y Python.
+
+## Despliegue a Azure
+
+Workflow manual **Azure (Terraform)** (`azure.yml`): `plan` o `apply` por ambiente, autenticado con **OIDC** (sin
+secretos guardados), con aprobación del environment `azure-prod` y las mismas imágenes de GHCR por SHA. En Azure, el
+canary es nativo de Container Apps (revisiones múltiples, tráfico 10 % → 100 %). Detalle en
+[infra/terraform/README.md](../infra/terraform/README.md).
 
 ## Configurar el self-hosted runner (máquina de demo)
 

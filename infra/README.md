@@ -2,7 +2,7 @@
 
 **Tecnología:** Terraform · LiteLLM · OpenTelemetry · Phoenix · Prometheus · Alertmanager · Grafana · n8n
 **Fases del caso:** 10, 11, 13
-**Estado:** ✅ LiteLLM, observabilidad y RPA · ⏳ Terraform (bloque `feat/terraform`)
+**Estado:** ✅ LiteLLM, observabilidad, RPA y Terraform (Azure dev/prod)
 
 | Carpeta | Contenido |
 |---|---|
@@ -11,7 +11,7 @@
 | `observability/alertmanager/` | ✅ Enruta las alertas al webhook de n8n |
 | `observability/grafana/` | ✅ Datasources y 2 tableros **como código** ([generar_tableros.py](observability/grafana/generar_tableros.py) → `dashboards/*.json`, provisionados de solo lectura) |
 | `n8n/flujos/` | ✅ 3 flujos versionados que se importan y publican en cada arranque |
-| `terraform/` | ⏳ Módulos Azure y ambientes dev/prod |
+| `terraform/` | ✅ [Plataforma Azure](terraform/README.md): Container Apps con KEDA y canary, Job de ingesta por eventos, Cosmos, Managed Redis, Azure OpenAI, Key Vault con identidad administrada, private endpoints en prod y FinOps. Validada y probada sin credenciales (`validate`, `terraform test` con mocks, tflint y checkov) |
 
 ## Observabilidad (SAD 2.10)
 
@@ -54,4 +54,4 @@ docker run --rm -v ${PWD}/infra/observability/prometheus:/p -w /p --entrypoint p
 py -3.13 infra/observability/grafana/generar_tableros.py   # regenerar los tableros tras cambiarlos
 ```
 
-Terraform (siguiente bloque): `terraform validate`, `terraform test` con mocks, tflint y checkov.
+Terraform: ver [terraform/README.md](terraform/README.md) (todo en Docker, sin instalar Terraform).

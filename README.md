@@ -20,7 +20,7 @@ Asistente de IA generativa para asesores de atención y retención de una operad
 | 9 | [Modelos de ML](ml/): intención SVM (F1 0,92 GroupKFold, cascada con LLM), churn (AUC 0,71, señal), MLflow con promoción, drift PSI + Evidently · [ml-service](apps/ml-service/) | ✅ |
 | 11 | [Observabilidad y RPA](infra/): trazas OpenTelemetry → Phoenix (sin PII, `trace_id` en la auditoría), métricas Prometheus, 12 alertas probadas con promtool, 2 tableros Grafana como código, n8n (acción confirmada → ERP, escalamiento, alertas → acción) | ✅ |
 | 10, 12, 14 | [CI/CD](docs/04_ci_cd.md): lint, pruebas con cobertura ≥ 70 %, Bandit, gitleaks, Trivy (0 CVEs críticas en imágenes y dependencias), imágenes no root en GHCR por SHA · despliegue en la máquina de demo con gate de ML, smoke, golden y rollback automático | ✅ |
-| 13 | Terraform (Azure) con `validate` / `test` | ⏳ |
+| 13 | [Terraform (Azure)](infra/terraform/): dev y prod con Container Apps, Job de ingesta por eventos, Cosmos, Managed Redis, Azure OpenAI, Key Vault e identidad administrada, private endpoints en prod y presupuesto. `validate`, 5 pruebas con mocks, tflint y checkov (0 fallas) en el CI; despliegue manual con OIDC | ✅ |
 
 ## Inicio rápido
 

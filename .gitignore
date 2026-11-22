@@ -49,6 +49,9 @@ test-results/
 *.tfplan
 crash.log
 .terraform.lock.hcl.bak
+*.tfvars             # suscripción, correos, URLs internas: los entrega el pipeline (TF_VAR_*)
+!*.tfvars.example
+backend.hcl
 
 # --- Docs build ---
 docs/build/out/
